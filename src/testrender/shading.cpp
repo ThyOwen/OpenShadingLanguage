@@ -167,6 +167,8 @@ struct MxDielectric : public bsdl::mtx::DielectricLobe<BSDLLobe> {
     }
 };
 
+
+
 #ifndef __CUDACC__
 // Helper to register BSDL closures
 struct BSDLtoOSL {
@@ -1649,9 +1651,9 @@ process_medium_closure(const ShaderGlobalsType& sg, float path_roughness,
             const ClosureComponent* comp = closure->as_comp();
             Color3 cw                    = weight * comp->w;
             const auto& params           = *comp->as<MxAnisotropicVdfParams>();
-            result.sigma_t               = cw * params.extinction;
-            result.sigma_s               = params.albedo * result.sigma_t;
-            result.medium_g              = params.anisotropy;
+            result.medium_data.sigma_t               = cw * params.extinction;
+            result.medium_data.sigma_s               = params.albedo * result.medium_data.sigma_t;
+            result.medium_data.medium_g              = params.anisotropy;
             closure                      = nullptr;
             break;
         }
@@ -1659,18 +1661,22 @@ process_medium_closure(const ShaderGlobalsType& sg, float path_roughness,
             const ClosureComponent* comp = closure->as_comp();
             Color3 cw                    = weight * comp->w;
             const auto& params           = *comp->as<MxMediumVdfParams>();
-            result.sigma_t = { -OIIO::fast_log(params.transmission_color.x),
-                               -OIIO::fast_log(params.transmission_color.y),
-                               -OIIO::fast_log(params.transmission_color.z) };
-            // NOTE: closure weight scales the extinction parameter
-            result.sigma_t *= cw / params.transmission_depth;
-            result.sigma_s  = params.albedo * result.sigma_t;
-            result.medium_g = params.anisotropy;
-            // TODO: properly track a medium stack here ...
-            result.refraction_ior = sg.backfacing ? 1.0f / params.ior
-                                                  : params.ior;
-            result.priority       = params.priority;
-            closure               = nullptr;
+            
+            result.medium_data.sigma_t = Color3(
+                -OIIO::fast_log(params.transmission_color.x),
+                -OIIO::fast_log(params.transmission_color.y),
+                -OIIO::fast_log(params.transmission_color.z)
+            );
+            
+            result.medium_data.sigma_t *= cw / params.transmission_depth;
+            result.medium_data.sigma_s  = params.albedo * result.medium_data.sigma_t;
+            result.medium_data.medium_g = params.anisotropy;
+            
+            // Track IOR and priority here
+            result.medium_data.refraction_ior = sg.backfacing ? 1.0f / params.ior
+                                                              : params.ior;
+            result.medium_data.priority = params.priority;
+            closure = nullptr;
             break;
         }
         case MxDielectric::closureid(): {
@@ -1678,7 +1684,7 @@ process_medium_closure(const ShaderGlobalsType& sg, float path_roughness,
             const MxDielectric::Data& params = *comp->as<MxDielectric::Data>();
             if (!is_black(weight * comp->w * params.refr_tint)) {
                 // TODO: properly track a medium stack here ...
-                result.refraction_ior = sg.backfacing ? 1.0f / params.IOR
+                result.medium_data.refraction_ior = sg.backfacing ? 1.0f / params.IOR
                                                       : params.IOR;
             }
             closure = nullptr;
@@ -1694,7 +1700,7 @@ process_medium_closure(const ShaderGlobalsType& sg, float path_roughness,
                                       0.0f, 0.99f);
                 float sqrt_F0 = sqrtf(avg_F0);
                 float ior     = (1 + sqrt_F0) / (1 - sqrt_F0);
-                result.refraction_ior = sg.backfacing ? 1.0f / ior : ior;
+                result.medium_data.refraction_ior = sg.backfacing ? 1.0f / ior : ior;
             }
             closure = nullptr;
             break;
@@ -1868,7 +1874,7 @@ process_bsdf_closure(const ShaderGlobalsType& sg, float path_roughness,
                     else
                         ok = result.bsdf.add_bsdf<MxMicrofacet<
                             MxGeneralizedSchlickParams, GGXDist, true>>(
-                            cw, params, result.refraction_ior);
+                            cw, params, result.medium_data.refraction_ior);
                     break;
                 };
                 case MX_TRANSLUCENT_ID: {

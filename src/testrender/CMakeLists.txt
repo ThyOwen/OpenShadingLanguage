@@ -5,6 +5,7 @@
 # The 'testrender' executable
 set (testrender_srcs
      shading.cpp
+     volume.cpp
      simpleraytracer.cpp
      scene.cpp
      bvh.cpp

@@ -371,7 +371,8 @@ macro (osl_add_all_tests)
                 render-mx-generalized-schlick render-mx-generalized-schlick-glass
                 render-mx-layer
                 render-mx-sheen
-                render-microfacet render-oren-nayar
+                render-mx-medium-vdf
+		render-microfacet render-oren-nayar
                 render-spi-thinlayer
                 render-uv render-veachmis render-ward
                 render-raytypes

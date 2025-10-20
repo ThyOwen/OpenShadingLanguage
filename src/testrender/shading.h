@@ -16,6 +16,7 @@
 
 #include "optics.h"
 #include "sampling.h"
+#include "volume.h"
 
 
 OSL_NAMESPACE_BEGIN
@@ -454,15 +455,13 @@ private:
     int num_bsdfs, num_bytes;
 };
 
+struct MediumProperties;
+
+
 struct ShadingResult {
     Color3 Le          = Color3(0.0f);
     CompositeBSDF bsdf = {};
-    // medium data
-    Color3 sigma_s       = Color3(0.0f);
-    Color3 sigma_t       = Color3(0.0f);
-    float medium_g       = 0.0f;  // volumetric anisotropy
-    float refraction_ior = 1.0f;
-    int priority         = 0;
+    MediumProperties medium_data = {};
 };
 
 void

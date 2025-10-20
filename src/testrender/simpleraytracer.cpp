@@ -17,6 +17,7 @@ namespace pugi = OIIO::pugi;
 #    include "raytracer.h"
 #    include "shading.h"
 #    include "simpleraytracer.h"
+#    include "volume.h"
 #endif
 
 #include <cmath>
@@ -968,11 +969,66 @@ SimpleRaytracer::subpixel_radiance(float x, float y, Sampler& sampler,
     int prev_id    = -1;
     float bsdf_pdf = inf;  // camera ray has only one possible direction
 
+    MediumStack medium_stack;
+
     for (int b = 0; b <= max_bounces; b++) {
         ShaderGlobalsType sg;
-
         // trace the ray against the scene
         Intersection hit = scene.intersect(r, inf, prev_id);
+        
+        const MediumProperties* current_volume = medium_stack.current();
+        bool in_medium = medium_stack.in_medium();
+
+        //determine whether ray is in a medium
+        float t_volume = inf;
+        if (in_medium && current_volume && !current_volume->is_vacuum()) {
+            Vec3 rand_vol = sampler.get();
+            t_volume = current_volume->sample_distance(rand_vol.x);
+        }
+
+        //is there volume scattering
+        bool volume_scatter = in_medium && (t_volume < hit.t);
+        float t_event = volume_scatter ? t_volume : hit.t;
+        
+        //apply volumetric transmittance up to the event
+        if (in_medium && current_volume && !current_volume->is_vacuum()) {
+            Color3 transmittance = current_volume->transmittance(t_event);
+            path_weight *= transmittance;
+            
+            //early exit if transmittance kills the path
+            if (!(path_weight.x > 0) && !(path_weight.y > 0) && !(path_weight.z > 0)) {
+                break;
+            }
+        }
+        
+        // do volume scattering
+        if (volume_scatter) {
+            r.origin = r.origin + r.direction * t_volume;
+            
+            Vec3 rand_phase = sampler.get();
+            HenyeyGreenstein phase_func(current_volume->medium_g);
+            //IsotropicPhase phase_func;
+            PhaseFunction::Sample phase_sample = phase_func.sample(-r.direction, rand_phase.x, rand_phase.y);
+            
+            if (phase_sample.pdf <= 0.0f) {
+                break;
+            }
+            
+            //single scattering albedo = sigma_s / sigma_t
+            Color3 albedo = Color3(
+                current_volume->sigma_s.x / current_volume->sigma_t.x,
+                current_volume->sigma_s.y / current_volume->sigma_t.y,
+                current_volume->sigma_s.z / current_volume->sigma_t.z
+            );
+            
+            path_weight *= albedo * phase_sample.weight;
+            
+            r.direction = phase_sample.wi;
+            bsdf_pdf = phase_sample.pdf;
+
+            continue;
+        }
+        
         if (hit.t == inf) {
             // we hit nothing? check background shader
             if (backgroundShaderID >= 0) {
@@ -1018,8 +1074,9 @@ SimpleRaytracer::subpixel_radiance(float x, float y, Sampler& sampler,
         int shaderID = scene.shaderid(hit.id);
 
 #ifndef __CUDACC__
-        if (shaderID < 0 || !m_shaders[shaderID].surf)
+        if (shaderID < 0 || !m_shaders[shaderID].surf) {
             break;  // no shader attached? done
+        }
 
         // execute shader and process the resulting list of closures
         shadingsys->execute(*ctx, *m_shaders[shaderID].surf, sg);
@@ -1032,7 +1089,7 @@ SimpleRaytracer::subpixel_radiance(float x, float y, Sampler& sampler,
         bool last_bounce = b == max_bounces;
         process_closure(sg, r.roughness, result, (const ClosureColor*)sg.Ci,
                         last_bounce);
-
+        
 #ifndef __CUDACC__
         const size_t lightprims_size = m_lightprims.size();
 #endif
@@ -1076,16 +1133,17 @@ SimpleRaytracer::subpixel_radiance(float x, float y, Sampler& sampler,
             float bg_pdf   = 0;
             Vec3 bg        = background.sample(xi, yi, bg_dir, bg_pdf);
             BSDF::Sample b = result.bsdf.eval(-sg.I, bg_dir.val());
-            Color3 contrib = path_weight * b.weight * bg
-                             * MIS::power_heuristic<MIS::WEIGHT_WEIGHT>(bg_pdf,
+            Color3 contrib = path_weight * b.weight * 
+                             bg * MIS::power_heuristic<MIS::WEIGHT_WEIGHT>(bg_pdf,
                                                                         b.pdf);
             if ((contrib.x + contrib.y + contrib.z) > 0) {
                 ShaderGlobalsType shadow_sg;
                 Ray shadow_ray          = Ray(sg.P, bg_dir.val(), radius, 0, 0,
                                               Ray::SHADOW);
                 Intersection shadow_hit = scene.intersect(shadow_ray, inf,
-                                                          hit.id);
-                if (shadow_hit.t == inf)  // ray reached the background?
+                                                          hit.id);                
+                    
+                if (shadow_hit.t == inf) // ray reached the background?
                     path_radiance += contrib;
             }
         }
@@ -1114,27 +1172,21 @@ SimpleRaytracer::subpixel_radiance(float x, float y, Sampler& sampler,
                     Ray shadow_ray = Ray(sg.P, sample.dir, radius, 0, 0,
                                          Ray::SHADOW);
                     // trace a shadow ray and see if we actually hit the target
-                    // in this tiny renderer, tracing a ray is probably cheaper than evaluating the light shader
                     Intersection shadow_hit
                         = scene.intersect(shadow_ray, sample.dist, hit.id, lid);
 
 #ifndef __CUDACC__
                     const bool did_hit = shadow_hit.t == sample.dist;
 #else
-                    // The hit distance on the device is not as precise as on
-                    // the CPU, so we need to allow a little wiggle room. An
-                    // epsilon of 1e-3f empirically gives results that closely
-                    // match the CPU for the test scenes, so that's what we're
-                    // using.
                     const bool did_hit = fabsf(shadow_hit.t - sample.dist)
                                          < 1e-3f;
-#endif
+#endif  
+                    
                     if (did_hit) {
-                        // setup a shader global for the point on the light
+                        
                         globals_from_hit(light_sg, shadow_ray, sample.dist, lid,
                                          sample.u, sample.v);
 #ifndef __CUDACC__
-                        // execute the light shader (for emissive closures only)
                         shadingsys->execute(*ctx, *m_shaders[shaderID].surf,
                                             light_sg);
 #else
@@ -1143,7 +1195,7 @@ SimpleRaytracer::subpixel_radiance(float x, float y, Sampler& sampler,
                         ShadingResult light_result;
                         process_closure(light_sg, r.roughness, light_result,
                                         (const ClosureColor*)light_sg.Ci, true);
-                        // accumulate contribution
+                        
                         path_radiance += contrib * light_result.Le;
                     }
                 }
@@ -1160,12 +1212,22 @@ SimpleRaytracer::subpixel_radiance(float x, float y, Sampler& sampler,
         // Just simply use roughness as spread slope
         r.spread    = std::max(r.spread, p.roughness);
         r.roughness = p.roughness;
-        if (!(path_weight.x > 0) && !(path_weight.y > 0)
-            && !(path_weight.z > 0))
+        
+        if (!result.medium_data.is_vacuum()) {
+            bool entering = !sg.backfacing;
+        
+            if (entering) {
+                medium_stack.push(result.medium_data);
+            } else {
+                medium_stack.pop();
+            }
+        }
+
+        if (!(path_weight.x > 0) && !(path_weight.y > 0) && !(path_weight.z > 0) && b > 10)
             break;  // filter out all 0's or NaNs
         prev_id  = hit.id;
         r.origin = sg.P;
-    }
+    }    
     return path_radiance;
 }
 
