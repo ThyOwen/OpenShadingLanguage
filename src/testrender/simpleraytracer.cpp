@@ -975,58 +975,45 @@ SimpleRaytracer::subpixel_radiance(float x, float y, Sampler& sampler,
         ShaderGlobalsType sg;
         // trace the ray against the scene
         Intersection hit = scene.intersect(r, inf, prev_id);
-        
-        const MediumProperties* current_volume = medium_stack.current();
+
+        const HomogeneousVolume* volume = static_cast<const HomogeneousVolume*>(medium_stack.current()); 
         bool in_medium = medium_stack.in_medium();
 
-        //determine whether ray is in a medium
-        float t_volume = inf;
-        if (in_medium && current_volume && !current_volume->is_vacuum()) {
-            Vec3 rand_vol = sampler.get();
-            t_volume = current_volume->sample_distance(rand_vol.x);
-        }
+        if (in_medium && volume && !volume->is_vacuum()) {
+            Medium::Sample medium_sample = volume->sample(r, sampler, hit);
 
-        //is there volume scattering
-        bool volume_scatter = in_medium && (t_volume < hit.t);
-        float t_event = volume_scatter ? t_volume : hit.t;
-        
-        //apply volumetric transmittance up to the event
-        if (in_medium && current_volume && !current_volume->is_vacuum()) {
-            Color3 transmittance = current_volume->transmittance(t_event);
-            path_weight *= transmittance;
+            path_weight *= medium_sample.transmittance;
             
-            //early exit if transmittance kills the path
             if (!(path_weight.x > 0) && !(path_weight.y > 0) && !(path_weight.z > 0)) {
                 break;
             }
-        }
-        
-        // do volume scattering
-        if (volume_scatter) {
-            r.origin = r.origin + r.direction * t_volume;
-            
-            Vec3 rand_phase = sampler.get();
-            HenyeyGreenstein phase_func(current_volume->medium_g);
-            //IsotropicPhase phase_func;
-            PhaseFunction::Sample phase_sample = phase_func.sample(-r.direction, rand_phase.x, rand_phase.y);
-            
-            if (phase_sample.pdf <= 0.0f) {
-                break;
-            }
-            
-            //single scattering albedo = sigma_s / sigma_t
-            Color3 albedo = Color3(
-                current_volume->sigma_s.x / current_volume->sigma_t.x,
-                current_volume->sigma_s.y / current_volume->sigma_t.y,
-                current_volume->sigma_s.z / current_volume->sigma_t.z
-            );
-            
-            path_weight *= albedo * phase_sample.weight;
-            
-            r.direction = phase_sample.wi;
-            bsdf_pdf = phase_sample.pdf;
 
-            continue;
+            r.origin = r.origin + r.direction * medium_sample.t;
+
+            
+            if (medium_sample.scatter) {
+
+                Vec3 rand_phase = sampler.get();
+                HenyeyGreenstein phase_func(volume->medium_g);
+                BSDF::Sample phase_sample = phase_func.sample(-r.direction, rand_phase.x, rand_phase.y, rand_phase.z);
+
+                if (phase_sample.pdf <= 0.0f) {
+                    break;
+                }
+
+                Color3 albedo = Color3(
+                    volume->sigma_s.x / volume->sigma_t.x,
+                    volume->sigma_s.y / volume->sigma_t.y,
+                    volume->sigma_s.z / volume->sigma_t.z
+                );
+
+                path_weight *= albedo * phase_sample.weight;
+
+                r.direction = phase_sample.wi;
+                bsdf_pdf = phase_sample.pdf;
+
+                continue;
+            }
         }
         
         if (hit.t == inf) {
@@ -1217,9 +1204,9 @@ SimpleRaytracer::subpixel_radiance(float x, float y, Sampler& sampler,
             bool entering = !sg.backfacing;
         
             if (entering) {
-                medium_stack.push(result.medium_data);
+                medium_stack.push_medium<HomogeneousVolume>(result.medium_data);
             } else {
-                medium_stack.pop();
+                medium_stack.pop_medium();
             }
         }
 

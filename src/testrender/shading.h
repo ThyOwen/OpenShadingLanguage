@@ -16,8 +16,6 @@
 
 #include "optics.h"
 #include "sampling.h"
-#include "volume.h"
-
 
 OSL_NAMESPACE_BEGIN
 
@@ -262,6 +260,7 @@ struct EnergyCompensatedOrenNayar;
 struct ZeltnerBurleySheen;
 struct CharlieSheen;
 struct SpiThinLayer;
+struct HenyeyGreenstein;
 
 // StaticVirtual generates a switch/case dispatch method for us given
 // a list of possible subtypes. We just need to forward declare them.
@@ -271,7 +270,8 @@ using AbstractBSDF = bsdl::StaticVirtual<
     MicrofacetBeckmannBoth, MicrofacetGGXRefl, MicrofacetGGXRefr,
     MicrofacetGGXBoth, MxConductor, MxDielectric, MxBurleyDiffuse,
     EnergyCompensatedOrenNayar, ZeltnerBurleySheen, CharlieSheen,
-    MxGeneralizedSchlickOpaque, MxGeneralizedSchlick, SpiThinLayer>;
+    MxGeneralizedSchlickOpaque, MxGeneralizedSchlick, SpiThinLayer,
+    HenyeyGreenstein>;
 
 // Then we just need to inherit from AbstractBSDF
 
@@ -455,13 +455,84 @@ private:
     int num_bsdfs, num_bytes;
 };
 
-struct MediumProperties;
+struct VolumeParams {
+    Color3 sigma_t       = Color3(0.0f); // extinction coefficient
+    Color3 sigma_s       = Color3(0.0f); //scattering 
+    float medium_g       = 0.0f;  // volumetric anisotropy
+    float refraction_ior = 1.0f;
+    //int priority         = 0;
 
+    OSL_HOSTDEVICE bool is_vacuum() const
+    {
+        return sigma_t.x <= 0.0f && sigma_t.y <= 0.0f && sigma_t.z <= 0.0f;
+    }
+
+    OSL_HOSTDEVICE bool operator==(const VolumeParams &rhs) const {
+        return refraction_ior == rhs.refraction_ior &&
+            medium_g == rhs.medium_g &&
+            sigma_t.x == rhs.sigma_t.x &&
+            sigma_t.y == rhs.sigma_t.y &&
+            sigma_t.z == rhs.sigma_t.z &&
+            sigma_s.x == rhs.sigma_s.x &&
+            sigma_s.y == rhs.sigma_s.y &&
+            sigma_s.z == rhs.sigma_s.z;
+    }
+
+    OSL_HOSTDEVICE float max_sigma_t() const
+    {
+        return std::max(std::max(sigma_t.x, sigma_t.y), sigma_t.z);
+    }
+};
 
 struct ShadingResult {
     Color3 Le          = Color3(0.0f);
     CompositeBSDF bsdf = {};
-    MediumProperties medium_data = {};
+    VolumeParams medium_data = {};
+};
+
+struct HenyeyGreenstein final : public BSDF {
+    const float g;
+    OSL_HOSTDEVICE HenyeyGreenstein(float g) 
+        : BSDF(this),
+        g(g) 
+    {
+    }
+
+    static OSL_HOSTDEVICE float PhaseHG(float cos_theta, float g) {
+        const float denom = 1 + g * g + 2 * g * cos_theta;
+        return (1 - g * g) / (4 * M_PI * denom * sqrtf(denom));
+    }
+
+    OSL_HOSTDEVICE Sample eval(const Vec3& wo, const Vec3& wi) const 
+    {
+        const float pdf = PhaseHG(dot(wo, wi), g);
+        return { wi, Color3(pdf), pdf, 0.0f };
+    }
+
+    OSL_HOSTDEVICE Sample sample(const Vec3& wo, float rx, float ry, float rz) const 
+    {
+        TangentFrame frame = TangentFrame::from_normal(wo);
+
+        float cos_theta;
+        if (abs(g) < 1e-3f) {
+            cos_theta = 1.0f - 2.0f * rx;
+        } else {
+            float sqr_term = (1 - g * g) / (1 - g + 2 * g * rx);
+            cos_theta = (1 + g * g - sqr_term * sqr_term) / (2 * g);
+            cos_theta = OIIO::clamp(cos_theta, -1.0f, 1.0f);
+        }
+
+        float sin_theta =  sqrtf(OIIO::clamp(1.0f - cos_theta * cos_theta, 0.0f, 1.0f));
+        float phi = 2 * M_PI * ry;
+        Vec3 local_wi = Vec3(sin_theta * cosf(phi), sin_theta * sinf(phi), cos_theta);
+
+        Vec3 wi = frame.toworld(local_wi);
+        float pdf_val = PhaseHG(cos_theta, g);
+
+        Color3 weight = Color3(1.0f);
+        return { wi, weight, pdf_val, 0.0f };
+    }
+
 };
 
 void

@@ -167,8 +167,6 @@ struct MxDielectric : public bsdl::mtx::DielectricLobe<BSDLLobe> {
     }
 };
 
-
-
 #ifndef __CUDACC__
 // Helper to register BSDL closures
 struct BSDLtoOSL {
@@ -1675,7 +1673,7 @@ process_medium_closure(const ShaderGlobalsType& sg, float path_roughness,
             // Track IOR and priority here
             result.medium_data.refraction_ior = sg.backfacing ? 1.0f / params.ior
                                                               : params.ior;
-            result.medium_data.priority = params.priority;
+            //result.medium_data.priority = params.priority;
             closure = nullptr;
             break;
         }

@@ -5,227 +5,119 @@
 #pragma once
 
 #include <OSL/dual_vec.h>
+
+#include "bsdl_config.h"
 #include <BSDL/static_virtual.h>
 
-
-#include "sampling.h"
+#include "raytracer.h"
+#include "shading.h"
 
 OSL_NAMESPACE_BEGIN
 
 // StaticVirtual generates a switch/case dispatch method for us given
-// a list of possible subtypes. We just need to forward declare them. 
-// See shading.h for the same simplmentation 
+// a list of possible subtypes. We just need to forward declare them.
+// See shading.h for the same simplmentation
+struct HomogeneousVolume;
+using AbstractMedium = bsdl::StaticVirtual<HomogeneousVolume>;
 
-struct HenyeyGreenstein;
-struct IsotropicPhase;
-using AbstractPhaseFunction = bsdl::StaticVirtual<HenyeyGreenstein, IsotropicPhase>;
 
-struct PhaseFunction : public AbstractPhaseFunction { 
+struct Medium : public AbstractMedium {
     struct Sample {
-
-        OSL_HOSTDEVICE Sample() : wi(0.0f), weight(0.0f), pdf(0.0f) 
+        OSL_HOSTDEVICE Sample()
+            : t(0.0f), transmittance(0.0f), pdf(0.0f)
         {
         }
         OSL_HOSTDEVICE Sample(const Sample& o)
-            : wi(o.wi), weight(o.weight), pdf(o.pdf)
+            : t(o.t), scatter(o.scatter), transmittance(o.transmittance)
         {
         }
-        OSL_HOSTDEVICE Sample(Vec3 wi, Color3 w, float pdf)
-            : wi(wi), weight(w), pdf(pdf)
+        OSL_HOSTDEVICE Sample(float t, bool scatter, Color3 transmittance, float pdf)
+            : t(t), scatter(scatter), transmittance(transmittance)
         {
         }
-
-        Vec3 wi;
-        Color3 weight;
-        float pdf;      
+        float t;
+        bool scatter; 
+        Color3 transmittance;
     };
-        
-    template<typename LOBE> OSL_HOSTDEVICE PhaseFunction(LOBE* lobe) : AbstractPhaseFunction(lobe)
+    
+    template<typename LOBE>
+    OSL_HOSTDEVICE Medium(LOBE* lobe) : AbstractMedium(lobe)
     {
     }
-    // Default implementations, to be overriden by subclasses
 
-    OSL_HOSTDEVICE float eval(const Vec3& wo, const Vec3& wi) const
-    {
-        return {};
-    }
+    OSL_HOSTDEVICE Sample sample(const Ray &ray, Sampler &sampler) const;
+    OSL_HOSTDEVICE Color3 transmittance(float distance) const;
 
-    OSL_HOSTDEVICE float pdf(const Vec3& wo, const Vec3& wi) const
-    {
-        return {};
-    }
-
-    OSL_HOSTDEVICE  Sample sample(const Vec3& wo, float rx, float ry) const
-    {
-        return {};
-    }
-
-
-    // And the "virtual" versions of the above. They are implemented via
-    // dispatch with a lambda, but it has to be written after subclasses
-    // with their inline methods have been defined. See shading.cpp
-    OSL_HOSTDEVICE float eval_vrtl(const Vec3& wo, const Vec3& wi) const;
-    OSL_HOSTDEVICE float pdf_vrtl(const Vec3& wo, const Vec3& wi) const;
-    OSL_HOSTDEVICE Sample sample_vrtl(const Vec3& wo, float rx, float ry) const;
-#ifdef __CUDACC__
-    // Copied from BSDF in shading.h
-    // TODO: This is a total hack to avoid a misaligned address error
-    // that sometimes occurs with the EnergyCompensatedOrenNayar BSDF.
-    // It's not clear what the issue is or why this fixes it, but that
-    // will take a bit of digging.
-    int pad;
-#endif
+    int priority = -1;
 };
 
 
 
-struct IsotropicPhase : public PhaseFunction {
+struct HomogeneousVolume final : public Medium, VolumeParams {
 
-    OSL_HOSTDEVICE IsotropicPhase()
-        : PhaseFunction(this)
+    OSL_HOSTDEVICE HomogeneousVolume(const VolumeParams& params)
+        : Medium(this), VolumeParams(params)
     {
     }
+    OSL_HOSTDEVICE 
 
-    OSL_HOSTDEVICE float eval(const Vec3& /*wo*/, const Vec3& /*wi*/) const 
+    OSL_HOSTDEVICE Medium::Sample sample(const Ray &ray, Sampler &sampler, Intersection& hit) const
     {
-        return 0.25f * float(M_1_PI);  // 1 / (4π)
-    }
+        // sample distance
+        Vec3 rand_vol = sampler.get();
 
-    OSL_HOSTDEVICE PhaseFunction::Sample sample(const Vec3& /*wo*/, float rx, float ry) const 
-    {
-
-        float z   = 1.0f - 2.0f * rx;
-        float r   = sqrtf(OIIO::clamp(1.0f - z * z, 0.0f, 1.0f));
-        float phi = 2.0f * float(M_PI) * ry;
-        Vec3 wi   = Vec3(r * cosf(phi), r * sinf(phi), z);
-
-        float pdf     = 0.25f * float(M_1_PI);
-        Color3 weight = Color3(1.0f);
-        return PhaseFunction::Sample(wi, weight, pdf);
-    }
-
-    OSL_HOSTDEVICE float pdf(const Vec3& /*wo*/, const Vec3& /*wi*/) const 
-    {
-        return 0.25f * float(M_1_PI);
-    }
-};
-
-struct HenyeyGreenstein : public PhaseFunction {
-    const float g;
-    OSL_HOSTDEVICE HenyeyGreenstein(float g) 
-        : PhaseFunction(this),
-        g(g) 
-    {
-    }
-
-    static OSL_HOSTDEVICE float PhaseHG(float cos_theta, float g) {
-        float denom = 1 + g * g + 2 * g * cos_theta;
-        return (1 - g * g) / (4 * M_PI * denom * sqrtf(denom));
-    }
-
-    OSL_HOSTDEVICE float eval(const Vec3& wo, const Vec3& wi) const 
-    {
-        return PhaseHG(dot(wo, wi), g);
-    }
-
-    OSL_HOSTDEVICE PhaseFunction::Sample sample(const Vec3& wo, float rx, float ry) const 
-    {
-        TangentFrame frame = TangentFrame::from_normal(wo);
-
-        float cos_theta;
-        if (abs(g) < 1e-3f) {
-            cos_theta = 1.0f - 2.0f * rx;
-        } else {
-            float sqr_term = (1 - g * g) / (1 - g + 2 * g * rx);
-            cos_theta = (1 + g * g - sqr_term * sqr_term) / (2 * g);
-            cos_theta = OIIO::clamp(cos_theta, -1.0f, 1.0f);
+        float sigma_t_max = max_sigma_t();
+        if (sigma_t_max <= 0.0f) {
+            // No extinction, treat as vacuum
+            return Medium::Sample { hit.t, false, Color3(1.0f) };
         }
-
-        float sin_theta =  sqrtf(OIIO::clamp(1.0f - cos_theta * cos_theta, 0.0f, 1.0f));
-        float phi = 2 * M_PI * ry;
-        Vec3 local_wi = Vec3(sin_theta * cosf(phi), sin_theta * sinf(phi), cos_theta);
-
-        Vec3 wi = frame.toworld(local_wi);
-        float pdf_val = PhaseHG(cos_theta, g);
-
-        Color3 weight = Color3(1.0f);
-        return PhaseFunction::Sample(wi, weight, pdf_val);
-    }
-
-    OSL_HOSTDEVICE float pdf(const Vec3& wo, const Vec3& wi) const 
-    {
-        return eval(wo, wi);
-    }
-};
-
-
-
-struct MediumProperties {
-    //https://graphics.pixar.com/library/ProductionVolumeRendering/paper.pdf
-    Color3 sigma_t       = Color3(0.0f); // extinction coefficient
-    Color3 sigma_s       = Color3(0.0f); //scattering 
-    float medium_g       = 0.0f;  // volumetric anisotropy
-    float refraction_ior = 1.0f;
-    int priority         = 0;
-
-    OSL_HOSTDEVICE MediumProperties() :
-        sigma_t(0),
-        sigma_s(0),
-        medium_g(0),
-        refraction_ior(1),
-        priority(0)
-    {
-    }
-
-    OSL_HOSTDEVICE MediumProperties(Color3 sigma_t, Color3 sigma_s, 
-                                    float medium_g, float refraction_ior, int priority) :
-        sigma_t(sigma_t),
-        sigma_s(sigma_s),
-        medium_g(medium_g),
-        refraction_ior(refraction_ior),
-        priority(priority)
-    {
-    }
-
-
-    OSL_HOSTDEVICE float sample_distance(float rnd) const
-    {
-        float sigma_t = max_sigma_t();
-        if (sigma_t <= 0.0f)
-            return std::numeric_limits<float>::infinity();
 
         // Exponential sampling: t = -log(1 - ξ) / σ_t
-        return -logf(1.0f - rnd) / sigma_t;
+        float t_volume = -logf(1.0f - rand_vol.x) / sigma_t_max;
+
+        // Determine if volume scattering occurs before surface hit
+        bool volume_scatter = (t_volume < hit.t);
+        float t_event       = volume_scatter ? t_volume : hit.t;
+
+        // Apply transmittance up to the event (always needed)
+        Color3 tr = transmittance(t_event);
+
+        return Medium::Sample { t_volume, volume_scatter, tr };
     }
 
-    //transmittance using Beer-Lambert law
     OSL_HOSTDEVICE Color3 transmittance(float distance) const
-    {
+    { //Beer-Lambert law
         return Color3(expf(-sigma_t.x * distance),
                       expf(-sigma_t.y * distance),
                       expf(-sigma_t.z * distance));
     }
-
-    OSL_HOSTDEVICE bool is_vacuum() const
-    {
-        return sigma_t.x <= 0.0f && sigma_t.y <= 0.0f && sigma_t.z <= 0.0f;
-    }
-
-    OSL_HOSTDEVICE float max_sigma_t() const
-    {
-        return std::max(std::max(sigma_t.x, sigma_t.y), sigma_t.z);
-    }
 };
 
+/*
 struct MediumStack {
+
     OSL_HOSTDEVICE MediumStack() : depth(0) {}
 
-    OSL_HOSTDEVICE void push(const MediumProperties& vol)
+    OSL_HOSTDEVICE void push(const VolumeParams& vol)
     {
-        if (depth < MaxEntries) {
-            stack[depth] = vol;
-            depth++;
+        if (depth >= MaxEntries)
+            return;
+
+        int insert_pos = depth;
+
+        for (int i = 0; i < depth; ++i) {
+            if (vol.priority < stack[i].priority) {
+                insert_pos = i;
+                break;
+            }
         }
+
+        for (int j = depth; j > insert_pos; --j) {
+            stack[j] = stack[j - 1];
+        }
+
+        stack[insert_pos] = vol;
+        depth++;
     }
 
     OSL_HOSTDEVICE void pop()
@@ -234,21 +126,83 @@ struct MediumStack {
             depth--;
     }
 
-    OSL_HOSTDEVICE const MediumProperties* current() const
+    OSL_HOSTDEVICE const VolumeParams* current() const
     {
         return depth > 0 ? &stack[depth - 1] : nullptr;
+    }
+
+    enum { MaxEntries = 16 };
+
+    VolumeParams stack[MaxEntries];
+    int depth;
+};
+*/
+
+struct MediumStack {
+
+    OSL_HOSTDEVICE MediumStack() : depth(0), num_bytes(0) {}
+
+    OSL_HOSTDEVICE const Medium* current() const {
+        return depth > 0 ? mediums[depth - 1] : nullptr;
     }
 
     OSL_HOSTDEVICE bool in_medium() const { return depth > 0; }
 
     OSL_HOSTDEVICE int size() const { return depth; }
 
-//    private:
+    template<typename Medium_Type, typename... Medium_Args>
+    OSL_HOSTDEVICE bool push_medium(Medium_Args&&... args) {
+
+        static_assert(sizeof(decltype(Medium_Type::priority)) > 0,
+                      "Medium_Type must have a 'priority' field");
+
+
+        Medium_Type* new_medium = new (pool + num_bytes)
+            Medium_Type(std::forward<Medium_Args>(args)...);
+
+        if (depth >= MaxEntries)
+            return false;
+
+        if (num_bytes + sizeof(Medium_Type) > MaxSize)
+            return false;
+
+        int insert_pos = depth;
+
+        for (int i = 0; i < depth; ++i) {
+            if (new_medium->priority < mediums[i]->priority) {
+                insert_pos = i;
+                break;
+            }
+        }
+
+        for (int j = depth; j > insert_pos; --j) {
+            mediums[j] = mediums[j - 1];
+        }
+
+        mediums[insert_pos] = new_medium;
+        depth++;
+        num_bytes += sizeof(Medium_Type);
+        return true;
+    }
+
+    OSL_HOSTDEVICE void pop_medium()
+    {
+        if (depth > 0)
+            depth--;
+    }
+
+private:
+    /// Never try to copy this struct because it would invalidate the bsdf pointers
+    OSL_HOSTDEVICE MediumStack(const MediumStack& c);
+    OSL_HOSTDEVICE MediumStack& operator=(const MediumStack& c);
 
     enum { MaxEntries = 8 };
+    enum { MaxSize = 256 * sizeof(float) };
 
-    MediumProperties stack[MaxEntries];
-    int depth;
+    Medium* mediums[MaxEntries];
+    char pool[MaxSize];
+    int depth, num_bytes;
 };
+
 
 OSL_NAMESPACE_END

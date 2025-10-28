@@ -35,6 +35,8 @@ if (OSL_USE_OPTIX)
         sampling.h
         shading.h
         shading.cpp
+        volume.h
+        volume.cpp
         simpleraytracer.cpp
         )
 
