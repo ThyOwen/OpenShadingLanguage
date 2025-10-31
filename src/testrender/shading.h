@@ -478,10 +478,6 @@ struct VolumeParams {
             sigma_s.z == rhs.sigma_s.z;
     }
 
-    OSL_HOSTDEVICE float max_sigma_t() const
-    {
-        return std::max(std::max(sigma_t.x, sigma_t.y), sigma_t.z);
-    }
 };
 
 struct ShadingResult {

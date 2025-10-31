@@ -9,7 +9,7 @@
    <ShaderGroup>
       param float scale_s 0;
       param float scale_t 0;
-      param color Ca 0.1 0.1 0.1;
+      param color Ca 0.5 0.5 0.5;
       param color Cb 0.5 0.5 0.5;
       shader checkerboard tex;
       shader matte layer1;
@@ -20,7 +20,7 @@
    <ShaderGroup>
       param float scale_s 0;
       param float scale_t 0;
-      param color Ca 0.1 0.1 0.1;
+      param color Ca 0.5 0.5 0.5;
       param color Cb 0.5 0.5 0.5;
       shader checkerboard tex;
       shader matte layer1;
@@ -32,9 +32,9 @@
   <!-- Spheres -->
 
    <ShaderGroup>
-      param color albedo 0.4 0.4 0.2;
-      param float transmission_depth 0.5;
-      param color transmission_color 0.1 0.5 0.9;
+      param color albedo 0.75 0.75 0.75;
+      param float transmission_depth 10;
+      param color transmission_color 0.75 0.75 0.75;
       param float anisotropy -0.9;
       param float ior 1.4; 
       param int priority 1; 
@@ -43,9 +43,9 @@
    <Sphere center="-4,0,0" radius="0.5" />
 
    <ShaderGroup>
-      param color albedo 0.4 0.4 0.2;
-      param float transmission_depth 0.5;
-      param color transmission_color 0.1 0.5 0.9;
+      param color albedo 0.75 0.75 0.75;
+      param float transmission_depth 0.25;
+      param color transmission_color 0.75 0.75 0.75;
       param float anisotropy -0.75;
       param float ior 1.4; 
       param int priority 1; 
@@ -54,9 +54,9 @@
    <Sphere center="-3,0,0" radius="0.5" />
 
    <ShaderGroup>
-      param color albedo 0.4 0.4 0.2;
-      param float transmission_depth 0.5;
-      param color transmission_color 0.1 0.5 0.9;
+      param color albedo 0.75 0.75 0.75;
+      param float transmission_depth 0.25;
+      param color transmission_color 0.75 0.75 0.75;
       param float anisotropy -0.5;
       param float ior 1.4; 
       param int priority 1; 
@@ -65,9 +65,9 @@
    <Sphere center="-2,0,0" radius="0.5" />
 
    <ShaderGroup>
-      param color albedo 0.4 0.4 0.2;
-      param float transmission_depth 0.5;
-      param color transmission_color 0.1 0.5 0.9;
+      param color albedo 0.75 0.75 0.75;
+      param float transmission_depth 0.25;
+      param color transmission_color 0.75 0.75 0.75;
       param float anisotropy -0.25;
       param float ior 1.4; 
       param int priority 1; 
@@ -76,9 +76,9 @@
    <Sphere center="-1,0,0" radius="0.5" />
 
    <ShaderGroup>
-      param color albedo 0.8 0.6 0.4;
-      param float transmission_depth 0.5;
-      param color transmission_color 0.1 0.5 0.9;
+      param color albedo 0.75 0.75 0.75;
+      param float transmission_depth 0.25;
+      param color transmission_color 0.75 0.75 0.75;
       param float anisotropy 0.0;
       param float ior 1.4; 
       param int priority 1; 
@@ -87,9 +87,9 @@
    <Sphere center="0,0,0" radius="0.5" />
 
    <ShaderGroup>
-      param color albedo 0.8 0.6 0.4;
-      param float transmission_depth 0.5;
-      param color transmission_color 0.1 0.5 0.9;
+      param color albedo 0.75 0.75 0.75;
+      param float transmission_depth 0.25;
+      param color transmission_color 0.75 0.75 0.75;
       param float anisotropy 0.25;
       param float ior 1.4; 
       param int priority 1; 
@@ -98,9 +98,9 @@
    <Sphere center="1,0,0" radius="0.5" />
 
    <ShaderGroup>
-      param color albedo 0.8 0.6 0.4;
-      param float transmission_depth 0.5;
-      param color transmission_color 0.1 0.5 0.9;
+      param color albedo 0.75 0.75 0.75;
+      param float transmission_depth 0.25;
+      param color transmission_color 0.75 0.75 0.75;
       param float anisotropy 0.5;
       param float ior 1.4; 
       param int priority 1; 
@@ -109,9 +109,9 @@
    <Sphere center="2,0,0" radius="0.5" />
 
    <ShaderGroup>
-      param color albedo 0.8 0.6 0.4;
-      param float transmission_depth 0.5;
-      param color transmission_color 0.1 0.5 0.9;
+      param color albedo 0.75 0.75 0.75;
+      param float transmission_depth 0.25;
+      param color transmission_color 0.75 0.75 0.75;
       param float anisotropy 0.75;
       param float ior 1.4; 
       param int priority 1; 
@@ -120,9 +120,9 @@
    <Sphere center="3,0,0" radius="0.5" />
 
    <ShaderGroup>
-      param color albedo 0.8 0.6 0.4;
-      param float transmission_depth 0.5;
-      param color transmission_color 0.1 0.5 0.9;
+      param color albedo 0.75 0.75 0.75;
+      param float transmission_depth 0.25;
+      param color transmission_color 0.75 0.75 0.75;
       param float anisotropy 0.9;
       param float ior 1.4; 
       param int priority 1; 
