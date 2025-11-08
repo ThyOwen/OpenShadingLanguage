@@ -5,7 +5,6 @@
 # The 'testrender' executable
 set (testrender_srcs
      shading.cpp
-     volume.cpp
      simpleraytracer.cpp
      scene.cpp
      bvh.cpp
@@ -35,8 +34,6 @@ if (OSL_USE_OPTIX)
         sampling.h
         shading.h
         shading.cpp
-        volume.h
-        volume.cpp
         simpleraytracer.cpp
         )
 

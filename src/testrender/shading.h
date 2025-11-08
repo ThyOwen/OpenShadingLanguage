@@ -16,6 +16,8 @@
 
 #include "optics.h"
 #include "sampling.h"
+#include "bvh.h"
+#include "raytracer.h"
 
 OSL_NAMESPACE_BEGIN
 
@@ -225,6 +227,30 @@ struct MxMediumVdfParams {
     ustringhash label;
 };
 
+struct MediumParams {
+    Color3 sigma_t       = Color3(0.0f); // extinction coefficient
+    Color3 sigma_s       = Color3(0.0f); //scattering 
+    float medium_g       = 0.0f;  // volumetric anisotropy
+    float refraction_ior = 1.0f;
+
+    OSL_HOSTDEVICE bool is_vacuum() const
+    {
+        return sigma_t.x <= 0.0f && sigma_t.y <= 0.0f && sigma_t.z <= 0.0f;
+    }
+
+    OSL_HOSTDEVICE bool operator==(const MediumParams &rhs) const {
+        return refraction_ior == rhs.refraction_ior &&
+            medium_g == rhs.medium_g &&
+            sigma_t.x == rhs.sigma_t.x &&
+            sigma_t.y == rhs.sigma_t.y &&
+            sigma_t.z == rhs.sigma_t.z &&
+            sigma_s.x == rhs.sigma_s.x &&
+            sigma_s.y == rhs.sigma_s.y &&
+            sigma_s.z == rhs.sigma_s.z;
+    }
+
+};
+
 struct GGXDist;
 struct BeckmannDist;
 
@@ -262,6 +288,9 @@ struct CharlieSheen;
 struct SpiThinLayer;
 struct HenyeyGreenstein;
 
+struct HomogeneousVolume;
+struct EmptyVolume;
+
 // StaticVirtual generates a switch/case dispatch method for us given
 // a list of possible subtypes. We just need to forward declare them.
 using AbstractBSDF = bsdl::StaticVirtual<
@@ -273,7 +302,9 @@ using AbstractBSDF = bsdl::StaticVirtual<
     MxGeneralizedSchlickOpaque, MxGeneralizedSchlick, SpiThinLayer,
     HenyeyGreenstein>;
 
-// Then we just need to inherit from AbstractBSDF
+using AbstractMedium = bsdl::StaticVirtual<HomogeneousVolume, EmptyVolume>;
+
+// Then we just need to inherit from AbstractBSDF or AbstractMedium 
 
 /// Individual BSDF (diffuse, phong, refraction, etc ...)
 /// Actual implementations of this class are private
@@ -330,6 +361,80 @@ struct BSDF : public AbstractBSDF {
     // will take a bit of digging.
     int pad;
 #endif
+};
+
+template <typename, typename = void>
+struct has_equal : std::false_type {};
+
+template <typename T>
+struct has_equal<T, std::void_t<decltype(std::declval<const T&>() == std::declval<const T&>())>> : std::true_type {};
+
+struct Medium : public AbstractMedium {
+    struct Sample {
+        OSL_HOSTDEVICE Sample()
+            : scatter(false), t(0.0f), transmittance(0.0f), weight(0.0f)
+        {
+        }
+        OSL_HOSTDEVICE Sample(const Sample& o)
+            : scatter(o.scatter), t(o.t), transmittance(o.transmittance), weight(o.weight)
+        {
+        }
+        OSL_HOSTDEVICE Sample(bool scatter, float t, Color3 transmittance, Color3 weight)
+            : scatter(scatter), t(t), transmittance(transmittance), weight(weight)
+        {
+        }
+        bool scatter; 
+        float t;
+        Color3 transmittance;
+        Color3 weight;
+    };
+    
+    template<typename LOBE>
+    OSL_HOSTDEVICE Medium(LOBE* lobe) : AbstractMedium(lobe)
+    {
+    }
+
+    template<typename Medium_Type, typename... Medium_Args>
+    OSL_HOSTDEVICE static Medium_Type* create(void*, Medium_Args&&...) { // this is hacky 
+        static_assert(sizeof...(Medium_Args) == 0, "Subclass must implement its own static create() function");
+        return nullptr;
+    }
+
+    OSL_HOSTDEVICE Sample sample(const Ray &ray, Sampler &sampler, Intersection& hit) const {
+        return {};
+    }
+
+    OSL_HOSTDEVICE Sample sample_vrtl(const Ray &ray, Sampler &sampler, Intersection& hit) const;
+
+    template<typename Param_Type>
+    OSL_HOSTDEVICE bool has_same_params_as(const Param_Type &params) const {
+        if constexpr (std::is_base_of_v<Param_Type, std::decay_t<decltype(*this)>>) {
+            auto lhsParam = static_cast<const Param_Type*>(this);
+            if (auto rhsParam = dynamic_cast<const Param_Type*>(&params)) {
+                if constexpr (has_equal<Param_Type>::value) {
+                    return *lhsParam == *rhsParam;
+                }
+            }
+        }
+        return false;
+    }
+
+    OSL_HOSTDEVICE bool operator==(const Medium& rhs) const {
+        using Self = std::decay_t<decltype(*this)>;
+
+        if (typeid(Self) == typeid(rhs)) { // only compare if both objects have the same conrete type
+            const Self& lhsRef = static_cast<const Self&>(*this);
+            const Self& rhsRef = static_cast<const Self&>(rhs);
+
+            if constexpr (has_equal<Self>::value) {
+                return lhsRef.operator==(rhsRef); // call the subclass's own operator== (not Medium's)
+            }
+        }
+        return false;
+    }
+
+    int priority = -1;
+    BSDF* phase_func;
 };
 
 /// Represents a weighted sum of BSDFS
@@ -455,87 +560,85 @@ private:
     int num_bsdfs, num_bytes;
 };
 
-struct VolumeParams {
-    Color3 sigma_t       = Color3(0.0f); // extinction coefficient
-    Color3 sigma_s       = Color3(0.0f); //scattering 
-    float medium_g       = 0.0f;  // volumetric anisotropy
-    float refraction_ior = 1.0f;
-    //int priority         = 0;
+struct MediumStack {
 
-    OSL_HOSTDEVICE bool is_vacuum() const
+    OSL_HOSTDEVICE MediumStack() : depth(0), num_bytes(0) {}
+
+    OSL_HOSTDEVICE const Medium* current() const {
+        return depth > 0 ? mediums[depth - 1] : nullptr;
+    }
+
+    OSL_HOSTDEVICE bool in_medium() const { return depth > 0; }
+
+    OSL_HOSTDEVICE int size() const { return depth; }
+
+    template<typename Medium_Type, typename... Medium_Args>
+    OSL_HOSTDEVICE bool push_medium(Medium_Args&&... args) {
+
+        Medium_Type* new_medium = Medium_Type::create(pool + num_bytes, std::forward<Medium_Args>(args)...);
+
+        if (depth >= MaxEntries)
+            return false;
+
+        if (num_bytes + sizeof(Medium_Type) > MaxSize)
+            return false;
+
+        auto current_medium = current();
+        if (current_medium && current_medium->has_same_params_as(new_medium))
+            return false;
+
+        int insert_pos = depth;
+
+        for (int i = 0; i < depth; ++i) {
+            if (new_medium->priority < mediums[i]->priority) {
+                insert_pos = i;
+                break;
+            }
+        }
+
+        for (int j = depth; j > insert_pos; --j) {
+            mediums[j] = mediums[j - 1];
+        }
+
+        mediums[insert_pos] = new_medium;
+        depth++;
+        num_bytes += sizeof(Medium_Type);
+        return true;
+    }
+
+    OSL_HOSTDEVICE void pop_medium()
     {
-        return sigma_t.x <= 0.0f && sigma_t.y <= 0.0f && sigma_t.z <= 0.0f;
+        if (depth > 0)
+            depth--;
     }
 
-    OSL_HOSTDEVICE bool operator==(const VolumeParams &rhs) const {
-        return refraction_ior == rhs.refraction_ior &&
-            medium_g == rhs.medium_g &&
-            sigma_t.x == rhs.sigma_t.x &&
-            sigma_t.y == rhs.sigma_t.y &&
-            sigma_t.z == rhs.sigma_t.z &&
-            sigma_s.x == rhs.sigma_s.x &&
-            sigma_s.y == rhs.sigma_s.y &&
-            sigma_s.z == rhs.sigma_s.z;
-    }
+private:
+    /// Never try to copy this struct because it would invalidate the bsdf pointers
+    OSL_HOSTDEVICE MediumStack(const MediumStack& c);
+    OSL_HOSTDEVICE MediumStack& operator=(const MediumStack& c);
 
+    enum { MaxEntries = 8 };
+    enum { MaxSize = 256 * sizeof(float) };
+
+    Medium* mediums[MaxEntries];
+    char pool[MaxSize];
+    int depth, num_bytes;
 };
+
 
 struct ShadingResult {
     Color3 Le          = Color3(0.0f);
     CompositeBSDF bsdf = {};
-    VolumeParams medium_data = {};
+    MediumParams medium_data = {};
 };
 
-struct HenyeyGreenstein final : public BSDF {
-    const float g;
-    OSL_HOSTDEVICE HenyeyGreenstein(float g) 
-        : BSDF(this),
-        g(g) 
-    {
-    }
-
-    static OSL_HOSTDEVICE float PhaseHG(float cos_theta, float g) {
-        const float denom = 1 + g * g + 2 * g * cos_theta;
-        return (1 - g * g) / (4 * M_PI * denom * sqrtf(denom));
-    }
-
-    OSL_HOSTDEVICE Sample eval(const Vec3& wo, const Vec3& wi) const 
-    {
-        const float pdf = PhaseHG(dot(wo, wi), g);
-        return { wi, Color3(pdf), pdf, 0.0f };
-    }
-
-    OSL_HOSTDEVICE Sample sample(const Vec3& wo, float rx, float ry, float rz) const 
-    {
-        TangentFrame frame = TangentFrame::from_normal(wo);
-
-        float cos_theta;
-        if (abs(g) < 1e-3f) {
-            cos_theta = 1.0f - 2.0f * rx;
-        } else {
-            float sqr_term = (1 - g * g) / (1 - g + 2 * g * rx);
-            cos_theta = (1 + g * g - sqr_term * sqr_term) / (2 * g);
-            cos_theta = OIIO::clamp(cos_theta, -1.0f, 1.0f);
-        }
-
-        float sin_theta =  sqrtf(OIIO::clamp(1.0f - cos_theta * cos_theta, 0.0f, 1.0f));
-        float phi = 2 * M_PI * ry;
-        Vec3 local_wi = Vec3(sin_theta * cosf(phi), sin_theta * sinf(phi), cos_theta);
-
-        Vec3 wi = frame.toworld(local_wi);
-        float pdf_val = PhaseHG(cos_theta, g);
-
-        Color3 weight = Color3(1.0f);
-        return { wi, weight, pdf_val, 0.0f };
-    }
-
-};
 
 void
 register_closures(ShadingSystem* shadingsys);
 OSL_HOSTDEVICE void
 process_closure(const OSL::ShaderGlobals& sg, float path_roughness,
-                ShadingResult& result, const ClosureColor* Ci, bool light_only);
+                ShadingResult& result, MediumStack &medium_stack,
+                const ClosureColor* Ci, bool light_only);
 OSL_HOSTDEVICE Vec3
 process_background_closure(const ClosureColor* Ci);
 

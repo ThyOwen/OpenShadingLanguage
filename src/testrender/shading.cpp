@@ -1513,6 +1513,123 @@ private:
     }
 };
 
+/// @name Mediums
+struct HenyeyGreenstein final : public BSDF {
+    const float g;
+    OSL_HOSTDEVICE HenyeyGreenstein(float g) 
+        : BSDF(this),
+        g(g) 
+    {
+    }
+
+    static OSL_HOSTDEVICE float PhaseHG(float cos_theta, float g) {
+        const float denom = 1 + g * g + 2 * g * cos_theta;
+        return (1 - g * g) / (4 * M_PI * denom * sqrtf(denom));
+    }
+
+    OSL_HOSTDEVICE Sample eval(const Vec3& wo, const Vec3& wi) const 
+    {
+        const float pdf = PhaseHG(dot(wo, wi), g);
+        return { wi, Color3(pdf), pdf, 0.0f };
+    }
+
+    OSL_HOSTDEVICE Sample sample(const Vec3& wo, float rx, float ry, float rz) const 
+    {
+        TangentFrame frame = TangentFrame::from_normal(wo);
+
+        float cos_theta;
+        if (abs(g) < 1e-3f) {
+            cos_theta = 1.0f - 2.0f * rx;
+        } else {
+            float sqr_term = (1 - g * g) / (1 - g + 2 * g * rx);
+            cos_theta = (1 + g * g - sqr_term * sqr_term) / (2 * g);
+            cos_theta = OIIO::clamp(cos_theta, -1.0f, 1.0f);
+        }
+
+        float sin_theta =  sqrtf(OIIO::clamp(1.0f - cos_theta * cos_theta, 0.0f, 1.0f));
+        float phi = 2 * M_PI * ry;
+        Vec3 local_wi = Vec3(sin_theta * cosf(phi), sin_theta * sinf(phi), cos_theta);
+
+        Vec3 wi = frame.toworld(local_wi);
+        float pdf_val = PhaseHG(cos_theta, g);
+
+        Color3 weight = Color3(1.0f);
+        return { wi, weight, pdf_val, 0.0f };
+    }
+
+};
+
+struct HomogeneousVolume final : public Medium, MediumParams {
+
+    OSL_HOSTDEVICE HomogeneousVolume(const MediumParams& params)
+        : Medium(this), MediumParams(params)
+    {
+    }
+
+    OSL_HOSTDEVICE static HomogeneousVolume* create(void* storage, const MediumParams& params) {
+        HomogeneousVolume* volume = new (storage) HomogeneousVolume(params);
+        volume->phase_func = new HenyeyGreenstein(params.medium_g);  // assuming g is anisotropy parameter
+        return volume;
+    }
+
+    OSL_HOSTDEVICE Medium::Sample sample(const Ray &ray, Sampler &sampler, Intersection& hit) const
+    {
+        Vec3 rand_vol = sampler.get();
+        float max_sigma_t = std::max(std::max(sigma_t.x, sigma_t.y), sigma_t.z);
+    /*
+        if (max_sigma_t <= 0.0f) {
+            // vacuum: no attenuation, pdf irrelevant
+            return Medium::Sample { hit.t, false, Color3(1.0f) };
+        }
+    */
+        float t_volume = -logf(1.0f - rand_vol.x) / max_sigma_t;
+        bool volume_scatter = (t_volume < hit.t);
+
+        Color3 weight;
+        Color3 tr;
+        
+        if (volume_scatter) {
+            tr = transmittance(t_volume);
+
+            Color3 albedo = Color3(
+                sigma_s.x / sigma_t.x,
+                sigma_s.y / sigma_t.y,
+                sigma_s.z / sigma_t.z
+            );
+
+            weight = albedo / tr;
+        } else {
+            tr = transmittance(hit.t);
+            weight = Color3(
+                1.0 / tr.x,
+                1.0 / tr.y,
+                1.0 / tr.z
+            );
+        }
+    /*
+        if (pdf <= 0.0f) {
+            // ensure Tr is black in this degenerate case if we expected absorption
+            return Medium::Sample { hit.t, false, tr };
+        }
+    */
+        return Medium::Sample { volume_scatter, t_volume, tr, weight };
+    }
+
+    OSL_HOSTDEVICE Color3 transmittance(float distance) const
+    { //Beer-Lambert law
+        return Color3(expf(-sigma_t.x * distance),
+                      expf(-sigma_t.y * distance),
+                      expf(-sigma_t.z * distance));
+    }
+};
+
+struct EmptyVolume final : public Medium {
+    OSL_HOSTDEVICE EmptyVolume() :
+        Medium(this)
+    {
+    }
+};
+
 OSL_HOSTDEVICE Color3
 evaluate_layer_opacity(const ShaderGlobalsType& sg, float path_roughness,
                        const ClosureColor* closure)
@@ -1606,8 +1723,8 @@ evaluate_layer_opacity(const ShaderGlobalsType& sg, float path_roughness,
 
 OSL_HOSTDEVICE void
 process_medium_closure(const ShaderGlobalsType& sg, float path_roughness,
-                       ShadingResult& result, const ClosureColor* closure,
-                       const Color3& w)
+                       ShadingResult& result, MediumStack &medium_stack,
+                       const ClosureColor* closure, const Color3& w)
 {
     if (!closure)
         return;
@@ -1652,6 +1769,11 @@ process_medium_closure(const ShaderGlobalsType& sg, float path_roughness,
             result.medium_data.sigma_t               = cw * params.extinction;
             result.medium_data.sigma_s               = params.albedo * result.medium_data.sigma_t;
             result.medium_data.medium_g              = params.anisotropy;
+
+            if (!sg.backfacing) { // if entering
+                medium_stack.push_medium<HomogeneousVolume>(result.medium_data);
+            }
+
             closure                      = nullptr;
             break;
         }
@@ -1673,6 +1795,11 @@ process_medium_closure(const ShaderGlobalsType& sg, float path_roughness,
             // Track IOR and priority here
             result.medium_data.refraction_ior = sg.backfacing ? 1.0f / params.ior
                                                               : params.ior;
+
+            if (!sg.backfacing) { // if entering
+                medium_stack.push_medium<HomogeneousVolume>(result.medium_data);
+            }
+            
             //result.medium_data.priority = params.priority;
             closure = nullptr;
             break;
@@ -1961,10 +2088,11 @@ process_bsdf_closure(const ShaderGlobalsType& sg, float path_roughness,
 
 OSL_HOSTDEVICE void
 process_closure(const ShaderGlobalsType& sg, float path_roughness,
-                ShadingResult& result, const ClosureColor* Ci, bool light_only)
+                ShadingResult& result, MediumStack &medium_stack,
+                const ClosureColor* Ci, bool light_only)
 {
     if (!light_only)
-        process_medium_closure(sg, path_roughness, result, Ci, Color3(1));
+        process_medium_closure(sg, path_roughness, result, medium_stack, Ci, Color3(1));
     process_bsdf_closure(sg, path_roughness, result, Ci, Color3(1), light_only);
 }
 
@@ -2026,5 +2154,9 @@ BSDF::sample_vrtl(const Vec3& wo, float rx, float ry, float rz) const
     return dispatch([&](auto bsdf) { return bsdf.sample(wo, rx, ry, rz); });
 }
 
+Medium::Sample Medium::sample_vrtl(const Ray &ray, Sampler &sampler, Intersection& hit) const
+{
+    return dispatch([&](auto volume) { return volume.sample(ray, sampler, hit); });
+}
 
 OSL_NAMESPACE_END

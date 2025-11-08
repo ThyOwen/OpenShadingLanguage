@@ -362,6 +362,7 @@ macro (osl_add_all_tests)
                 render-cornell
                 render-displacement
                 render-furnace-diffuse
+                render-mx-anisotropic-vdf
                 render-mx-furnace-burley-diffuse
                 render-mx-furnace-oren-nayar
                 render-mx-furnace-sheen
