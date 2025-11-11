@@ -227,15 +227,21 @@ struct MxMediumVdfParams {
     ustringhash label;
 };
 
+
 struct MediumParams {
     Color3 sigma_t       = Color3(0.0f); // extinction coefficient
     Color3 sigma_s       = Color3(0.0f); //scattering 
     float medium_g       = 0.0f;  // volumetric anisotropy
     float refraction_ior = 1.0f;
+    int priority         = 0;
 
-    OSL_HOSTDEVICE bool is_vacuum() const
+    OSL_HOSTDEVICE bool is_vaccum() const
     {
-        return sigma_t.x <= 0.0f && sigma_t.y <= 0.0f && sigma_t.z <= 0.0f;
+        return sigma_s.x <= 0.0f && sigma_s.y <= 0.0f && sigma_s.z <= 0.0f;
+    }
+
+    OSL_HOSTDEVICE bool is_special_priority() const {
+        return priority == 0;
     }
 
     OSL_HOSTDEVICE bool operator==(const MediumParams &rhs) const {
@@ -395,9 +401,13 @@ struct Medium : public AbstractMedium {
     }
 
     template<typename Medium_Type, typename... Medium_Args>
-    OSL_HOSTDEVICE static Medium_Type* create(void*, Medium_Args&&...) { // this is hacky 
-        static_assert(sizeof...(Medium_Args) == 0, "Subclass must implement its own static create() function");
+    OSL_HOSTDEVICE static Medium_Type* create(void*, Medium_Args&&...) {
+        static_assert(sizeof...(Medium_Args) == 0, "Subclass must implement its own static create() function");// this is hacky 
         return nullptr;
+    }
+
+    OSL_HOSTDEVICE const MediumParams* get_params() const {
+        return {};
     }
 
     OSL_HOSTDEVICE Sample sample(const Ray &ray, Sampler &sampler, Intersection& hit) const {
@@ -406,34 +416,8 @@ struct Medium : public AbstractMedium {
 
     OSL_HOSTDEVICE Sample sample_vrtl(const Ray &ray, Sampler &sampler, Intersection& hit) const;
 
-    template<typename Param_Type>
-    OSL_HOSTDEVICE bool has_same_params_as(const Param_Type &params) const {
-        if constexpr (std::is_base_of_v<Param_Type, std::decay_t<decltype(*this)>>) {
-            auto lhsParam = static_cast<const Param_Type*>(this);
-            if (auto rhsParam = dynamic_cast<const Param_Type*>(&params)) {
-                if constexpr (has_equal<Param_Type>::value) {
-                    return *lhsParam == *rhsParam;
-                }
-            }
-        }
-        return false;
-    }
+    OSL_HOSTDEVICE const MediumParams* get_params_vrtl() const;
 
-    OSL_HOSTDEVICE bool operator==(const Medium& rhs) const {
-        using Self = std::decay_t<decltype(*this)>;
-
-        if (typeid(Self) == typeid(rhs)) { // only compare if both objects have the same conrete type
-            const Self& lhsRef = static_cast<const Self&>(*this);
-            const Self& rhsRef = static_cast<const Self&>(rhs);
-
-            if constexpr (has_equal<Self>::value) {
-                return lhsRef.operator==(rhsRef); // call the subclass's own operator== (not Medium's)
-            }
-        }
-        return false;
-    }
-
-    int priority = -1;
     BSDF* phase_func;
 };
 
@@ -564,8 +548,19 @@ struct MediumStack {
 
     OSL_HOSTDEVICE MediumStack() : depth(0), num_bytes(0) {}
 
-    OSL_HOSTDEVICE const Medium* current() const {
-        return depth > 0 ? mediums[depth - 1] : nullptr;
+    OSL_HOSTDEVICE Medium* current() const {
+        // return the highest-priority medium
+        return depth > 0 ? mediums[0] : nullptr;
+    }
+
+    OSL_HOSTDEVICE const MediumParams* current_params() const {
+        if (depth > 0) {
+            const MediumParams* params = mediums[0]->get_params_vrtl();
+            if (params) {
+                return params;
+            }
+        }
+        return nullptr;
     }
 
     OSL_HOSTDEVICE bool in_medium() const { return depth > 0; }
@@ -573,7 +568,7 @@ struct MediumStack {
     OSL_HOSTDEVICE int size() const { return depth; }
 
     template<typename Medium_Type, typename... Medium_Args>
-    OSL_HOSTDEVICE bool push_medium(Medium_Args&&... args) {
+    OSL_HOSTDEVICE bool add_medium(Medium_Args&&... args) {
 
         Medium_Type* new_medium = Medium_Type::create(pool + num_bytes, std::forward<Medium_Args>(args)...);
 
@@ -583,37 +578,45 @@ struct MediumStack {
         if (num_bytes + sizeof(Medium_Type) > MaxSize)
             return false;
 
-        auto current_medium = current();
-        if (current_medium && current_medium->has_same_params_as(new_medium))
-            return false;
-
         int insert_pos = depth;
 
         for (int i = 0; i < depth; ++i) {
-            if (new_medium->priority < mediums[i]->priority) {
+            if (new_medium->get_params_vrtl()->priority > mediums[i]->get_params_vrtl()->priority) {
                 insert_pos = i;
                 break;
-            }
-        }
+            } 
+        }   
 
         for (int j = depth; j > insert_pos; --j) {
             mediums[j] = mediums[j - 1];
-        }
+        }   
 
         mediums[insert_pos] = new_medium;
         depth++;
         num_bytes += sizeof(Medium_Type);
+
         return true;
     }
 
     OSL_HOSTDEVICE void pop_medium()
     {
-        if (depth > 0)
+        if (depth > 0) {
+            mediums[0]->~Medium();
+            
+            for (int i = 1; i < depth; ++i) {
+                mediums[i - 1] = mediums[i];
+            }
+            
             depth--;
+        }
     }
 
+    OSL_HOSTDEVICE bool false_intersection_with(const MediumParams& params) {
+        const MediumParams* current = current_params();
+        return (current && ((params.priority < current->priority) || (params.is_special_priority() && current->is_special_priority() && depth > 1)));
+    }
 private:
-    /// Never try to copy this struct because it would invalidate the bsdf pointers
+    /// Never try to copy this struct because it would invalidate the medium pointers
     OSL_HOSTDEVICE MediumStack(const MediumStack& c);
     OSL_HOSTDEVICE MediumStack& operator=(const MediumStack& c);
 
@@ -624,7 +627,6 @@ private:
     char pool[MaxSize];
     int depth, num_bytes;
 };
-
 
 struct ShadingResult {
     Color3 Le          = Color3(0.0f);

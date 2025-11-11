@@ -994,11 +994,11 @@ SimpleRaytracer::subpixel_radiance(float x, float y, Sampler& sampler,
             break;
         }
 
-        const Medium* volume = medium_stack.current(); 
+        const Medium* medium = medium_stack.current(); 
         bool in_medium = medium_stack.in_medium();
 
-        if (in_medium && volume) {
-            Medium::Sample medium_sample = volume->sample_vrtl(r, sampler, hit);
+        if (in_medium && medium) {
+            Medium::Sample medium_sample = medium->sample_vrtl(r, sampler, hit);
             
             path_weight *= medium_sample.transmittance;
             
@@ -1007,11 +1007,10 @@ SimpleRaytracer::subpixel_radiance(float x, float y, Sampler& sampler,
             }
             
             if (medium_sample.scatter) {
-                Vec3 scatter_pos = r.point(medium_sample.t);
-                r.origin = scatter_pos;
+                r.origin = r.point(medium_sample.t);
 
                 Vec3 rand_phase = sampler.get();
-                BSDF::Sample phase_sample = volume->phase_func->sample_vrtl(-r.direction, 
+                BSDF::Sample phase_sample = medium->phase_func->sample_vrtl(-r.direction, 
                                                             rand_phase.x, 
                                                             rand_phase.y, 
                                                             rand_phase.z);
@@ -1024,6 +1023,7 @@ SimpleRaytracer::subpixel_radiance(float x, float y, Sampler& sampler,
                 bsdf_pdf = phase_sample.pdf;
                 continue;
             }
+            
         }
 
         // construct a shader globals for the hit point
@@ -1190,8 +1190,8 @@ SimpleRaytracer::subpixel_radiance(float x, float y, Sampler& sampler,
         // Just simply use roughness as spread slope
         r.spread    = std::max(r.spread, p.roughness);
         r.roughness = p.roughness;
-        
-        if (sg.backfacing) { // if exiting
+
+        if (sg.backfacing) {
             medium_stack.pop_medium();
         }
 
