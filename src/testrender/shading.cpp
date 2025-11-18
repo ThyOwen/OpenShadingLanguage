@@ -1573,25 +1573,21 @@ struct HomogeneousVolume final : public Medium {
         return volume;
     }
 
-    OSL_HOSTDEVICE Medium::Sample sample(const Ray &ray, Sampler &sampler, Intersection& hit) const
+    OSL_HOSTDEVICE Medium::Sample sample(Ray& r, Sampler &sampler, Intersection& hit) const
     {
         Vec3 rand_vol = sampler.get();
-        float max_sigma_t = fmaxf(fmaxf(params.sigma_t.x, params.sigma_t.y), params.sigma_t.z);
 
-        float t_volume = -logf(1.0f - rand_vol.x) / max_sigma_t;
+        float t_volume = -logf(1.0f - rand_vol.x) / params.avg_sigma_t();
         bool volume_scatter = (t_volume < hit.t);
 
         Color3 weight;
         Color3 tr;
         
         if (volume_scatter) {
+            r.origin = r.point(t_volume);
             tr = transmittance(t_volume);
 
-            Color3 albedo = Color3(
-                params.sigma_s.x / params.sigma_t.x,
-                params.sigma_s.y / params.sigma_t.y,
-                params.sigma_s.z / params.sigma_t.z
-            );
+            Color3 albedo = params.sigma_s / params.sigma_t;
 
             weight = albedo / tr;
         } else {
@@ -1631,7 +1627,7 @@ struct EmptyVolume final : public Medium {
         return volume;
     }
 
-    OSL_HOSTDEVICE Medium::Sample sample(const Ray &ray, Sampler &sampler, Intersection& hit) const
+    OSL_HOSTDEVICE Medium::Sample sample(Ray& ray, Sampler &sampler, Intersection& hit) const
     {
         return { false, 0.0f, Color3(1.0f), Color3(1.0f) };
     }
@@ -1783,7 +1779,7 @@ process_medium_closure(const ShaderGlobalsType& sg, float path_roughness,
             result.medium_data.medium_g              = params.anisotropy;
             result.medium_data.priority              = 0;
 
-            if (!sg.backfacing) { // if entering
+            if (!sg.backfacing) { // if entering 
                 if (result.medium_data.is_vaccum()) {
                     medium_stack.add_medium<EmptyVolume>(result.medium_data);
                 } else {
@@ -1812,7 +1808,7 @@ process_medium_closure(const ShaderGlobalsType& sg, float path_roughness,
             result.medium_data.refraction_ior = sg.backfacing ? 1.0f / params.ior : params.ior;
             result.medium_data.priority = params.priority;
                         
-            if (!sg.backfacing) { // if entering
+            if (!sg.backfacing) { // if entering 
                 if (result.medium_data.is_vaccum()) {
                     medium_stack.add_medium<EmptyVolume>(result.medium_data);
                 } else {
@@ -1840,25 +1836,25 @@ process_medium_closure(const ShaderGlobalsType& sg, float path_roughness,
             break;
         }
         case MX_GENERALIZED_SCHLICK_ID: {
-        const ClosureComponent* comp = closure->as_comp();
-        const auto& params = *comp->as<MxGeneralizedSchlickParams>();
-        if (!is_black(weight * comp->w * params.transmission_tint)) {
-            float avg_F0  = clamp((params.f0.x + params.f0.y + params.f0.z) / 3.0f,
-                                  0.0f, 0.99f);
-            float sqrt_F0 = sqrtf(avg_F0);
-            float ior     = (1 + sqrt_F0) / (1 - sqrt_F0);
-            float new_ior = sg.backfacing ? 1.0f / ior : ior;
-            
-            result.medium_data.refraction_ior = new_ior; 
+            const ClosureComponent* comp = closure->as_comp();
+            const auto& params = *comp->as<MxGeneralizedSchlickParams>();
+            if (!is_black(weight * comp->w * params.transmission_tint)) {
+                float avg_F0  = clamp((params.f0.x + params.f0.y + params.f0.z) / 3.0f,
+                                    0.0f, 0.99f);
+                float sqrt_F0 = sqrtf(avg_F0);
+                float ior     = (1 + sqrt_F0) / (1 - sqrt_F0);
+                float new_ior = sg.backfacing ? 1.0f / ior : ior;
+                
+                result.medium_data.refraction_ior = new_ior; 
 
-            const MediumParams* current_params = medium_stack.current_params();
-            if (current_params && result.medium_data.priority <= current_params->priority) {
-                result.medium_data.refraction_ior = current_params->refraction_ior;
+                const MediumParams* current_params = medium_stack.current_params();
+                if (current_params && result.medium_data.priority <= current_params->priority) {
+                    result.medium_data.refraction_ior = current_params->refraction_ior;
+                }
             }
+            closure = nullptr;
+            break;
         }
-        closure = nullptr;
-        break;
-    }
         default: closure = nullptr; break;
         }
         if (closure == nullptr && stack_idx > 0) {
@@ -2194,7 +2190,7 @@ BSDF::sample_vrtl(const Vec3& wo, float rx, float ry, float rz) const
     return dispatch([&](auto bsdf) { return bsdf.sample(wo, rx, ry, rz); });
 }
 
-Medium::Sample Medium::sample_vrtl(const Ray &ray, Sampler &sampler, Intersection& hit) const
+Medium::Sample Medium::sample_vrtl(Ray& ray, Sampler &sampler, Intersection& hit) const
 {
     return dispatch([&](const auto& medium) { return medium.sample(ray, sampler, hit); });
 }

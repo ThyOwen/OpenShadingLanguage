@@ -11,7 +11,7 @@ medium
         [[  string description = "Scattering color",
             float UImin = 0, float UImax = 1 ]],
     float transmission_depth = 0.5
-        [[  string description = "Mean free path (average distance between scattering events)",
+        [[  string description = "Mean free path (0.0 is black, infinity is transparent)",
             float UImin = 0, float UImax = 1 ]],
     color transmission_color = 1.0
         [[  string description = "Transmission color (volume absorption tint)",
@@ -23,8 +23,8 @@ medium
         [[  string description = "Index of refraction",
             float UImin = 0, float UImax = 1 ]],
     int priority = 0
-        [[  string description = "Priority for overlapping volumes",
-            float UImin = 0, float UImax = 1 ]],
+        [[  string description = "Priority for overlapping mediums. Zero is a special 'off' priority",
+            float UImin = 0, float UImax = 8 ]], // Same as MaxEntries in MediumStack
   )
 {
     Ci = transparent() + medium_vdf(albedo, transmission_depth, transmission_color, anisotropy, ior, priority);

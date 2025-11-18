@@ -373,6 +373,7 @@ macro (osl_add_all_tests)
                 render-mx-layer
                 render-mx-sheen
                 render-mx-medium-vdf
+                render-mx-medium-vdf-glass
 		render-microfacet render-oren-nayar
                 render-spi-thinlayer
                 render-uv render-veachmis render-ward

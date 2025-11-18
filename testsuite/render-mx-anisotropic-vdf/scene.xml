@@ -14,7 +14,6 @@
 
    <ShaderGroup>color Cs 0.35 0.35 0.35; shader matte layer1;</ShaderGroup>
    <Sphere center="73,16.5,78"        radius="16.5" /> <!-- Grey -->
-
    
    <ShaderGroup>float eta 15; shader metal layer1;</ShaderGroup>
    <Sphere center="27,16.5,47"        radius="16.5" /> <!-- Mirror -->
@@ -24,7 +23,7 @@
 
    <ShaderGroup>
       param color albedo 0.75 0.75 0.75;
-      param float extinction 0.01;
+      param float extinction 0.005;
       param float anisotropy 0.9;
 
       shader anisotropic layer1;
@@ -34,7 +33,6 @@
    <Quad corner="0,0,0" edge_x="0,99.9,0" edge_y="0,0,149.9" /> <!-- Left -->
    <Quad corner="99.9,0,0" edge_x="0,99.9,0" edge_y="0,0,149.9" /> <!-- Right -->
    <Quad corner="0,99.9,0" edge_x="99.9,0,0" edge_y="0,0,149.9" /> <!-- Front -->
-   <Quad corner="0,0,149.9" edge_x="99.9,0,0" edge_y="0,99.9,0" /> <!-- Top -->
-
+   <Quad corner="0,0,149.9" edge_x="99.9,0,0" edge_y="0,99.9,0" /> <!-- Top -->   
 
 </World>

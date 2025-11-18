@@ -230,7 +230,7 @@ struct MxMediumVdfParams {
 
 struct MediumParams {
     Color3 sigma_t       = Color3(0.0f); // extinction coefficient
-    Color3 sigma_s       = Color3(0.0f); //scattering 
+    Color3 sigma_s       = Color3(0.0f); // scattering 
     float medium_g       = 0.0f;  // volumetric anisotropy
     float refraction_ior = 1.0f;
     int priority         = 0;
@@ -242,6 +242,10 @@ struct MediumParams {
 
     OSL_HOSTDEVICE bool is_special_priority() const {
         return priority == 0;
+    }
+
+    OSL_HOSTDEVICE float avg_sigma_t() const {
+        return (sigma_t.x + sigma_t.y + sigma_t.z) / 3;
     }
 
     OSL_HOSTDEVICE bool operator==(const MediumParams &rhs) const {
@@ -377,16 +381,16 @@ struct has_equal<T, std::void_t<decltype(std::declval<const T&>() == std::declva
 
 struct Medium : public AbstractMedium {
     struct Sample {
-        OSL_HOSTDEVICE Sample()
-            : scatter(false), t(0.0f), transmittance(0.0f), weight(0.0f)
+        OSL_HOSTDEVICE Sample() : 
+            scatter(false), t(0.0f), transmittance(0.0f), weight(0.0f)
         {
         }
-        OSL_HOSTDEVICE Sample(const Sample& o)
-            : scatter(o.scatter), t(o.t), transmittance(o.transmittance), weight(o.weight)
+        OSL_HOSTDEVICE Sample(const Sample& o) : 
+            scatter(o.scatter), t(o.t), transmittance(o.transmittance), weight(o.weight)
         {
         }
-        OSL_HOSTDEVICE Sample(bool scatter, float t, Color3 transmittance, Color3 weight)
-            : scatter(scatter), t(t), transmittance(transmittance), weight(weight)
+        OSL_HOSTDEVICE Sample(bool scatter, float t, Color3 transmittance, Color3 weight) : 
+            scatter(scatter), t(t), transmittance(transmittance), weight(weight)
         {
         }
         bool scatter; 
@@ -396,7 +400,7 @@ struct Medium : public AbstractMedium {
     };
     
     template<typename LOBE>
-    OSL_HOSTDEVICE Medium(LOBE* lobe) : AbstractMedium(lobe)
+    OSL_HOSTDEVICE Medium(LOBE* lobe) : AbstractMedium(lobe), phase_func(nullptr)
     {
     }
 
@@ -410,11 +414,11 @@ struct Medium : public AbstractMedium {
         return {};
     }
 
-    OSL_HOSTDEVICE Sample sample(const Ray &ray, Sampler &sampler, Intersection& hit) const {
+    OSL_HOSTDEVICE Sample sample(Ray &r, Sampler &sampler, Intersection& hit) const {
         return {};
     }
 
-    OSL_HOSTDEVICE Sample sample_vrtl(const Ray &ray, Sampler &sampler, Intersection& hit) const;
+    OSL_HOSTDEVICE Sample sample_vrtl(Ray &r, Sampler &sampler, Intersection& hit) const;
 
     OSL_HOSTDEVICE const MediumParams* get_params_vrtl() const;
 
@@ -554,7 +558,7 @@ struct MediumStack {
     }
 
     OSL_HOSTDEVICE const MediumParams* current_params() const {
-        if (depth > 0) {
+        if (depth > 0 && mediums[0]) {
             const MediumParams* params = mediums[0]->get_params_vrtl();
             if (params) {
                 return params;
@@ -567,10 +571,54 @@ struct MediumStack {
 
     OSL_HOSTDEVICE int size() const { return depth; }
 
+    OSL_HOSTDEVICE bool integrate(Ray& r, Sampler& sampler, Intersection& hit, Color3& path_weight, Color3& path_radiance, float& bsdf_pdf) const 
+    {
+        if (depth <= 0) {
+            return false;
+        }
+        
+        Medium::Sample combined_sample{ false, 1.0f, Color3(1.0f), Color3(1.0f) };
+        
+        for (int i = 0; i < depth; ++i) {
+            Medium::Sample s = mediums[i]->sample_vrtl(r, sampler, hit);
+            
+            combined_sample.transmittance *= s.transmittance;
+            combined_sample.weight *= s.weight;
+            
+            combined_sample.scatter = s.scatter || combined_sample.scatter;
+            combined_sample.t = s.t < combined_sample.t ? s.t : combined_sample.t;
+        }
+
+        if (!(combined_sample.transmittance.x > 0 || combined_sample.transmittance.y > 0 || combined_sample.transmittance.z > 0)) {
+            return false;
+        }
+
+        path_weight *= combined_sample.transmittance;
+
+        Vec3 rand_phase = sampler.get();
+        if (combined_sample.scatter) {
+            if (!mediums[0]->phase_func) {
+                return false;
+            }
+            BSDF::Sample phase_sample = mediums[0]->phase_func->sample_vrtl(-r.direction, 
+                                                        rand_phase.x, 
+                                                        rand_phase.y, 
+                                                        rand_phase.z);
+            if (phase_sample.pdf <= 0.0f) {
+                return false;
+            }
+
+            path_weight *= phase_sample.weight;
+            r.direction = phase_sample.wi;
+            bsdf_pdf = phase_sample.pdf;
+            return true;
+        }
+        
+        return false;
+    }
+
     template<typename Medium_Type, typename... Medium_Args>
     OSL_HOSTDEVICE bool add_medium(Medium_Args&&... args) {
-
-        Medium_Type* new_medium = Medium_Type::create(pool + num_bytes, std::forward<Medium_Args>(args)...);
 
         if (depth >= MaxEntries)
             return false;
@@ -578,10 +626,22 @@ struct MediumStack {
         if (num_bytes + sizeof(Medium_Type) > MaxSize)
             return false;
 
+        Medium_Type* new_medium = Medium_Type::create(pool + num_bytes, std::forward<Medium_Args>(args)...);
+        
+        if (!new_medium) {
+            return false;
+        }
+
+        const MediumParams* new_params = new_medium->get_params_vrtl();
         int insert_pos = depth;
 
         for (int i = 0; i < depth; ++i) {
-            if (new_medium->get_params_vrtl()->priority > mediums[i]->get_params_vrtl()->priority) {
+            if (!mediums[i]) {
+                continue;
+            }
+            
+            const MediumParams* existing_params = mediums[i]->get_params_vrtl();
+            if (existing_params && new_params->priority > existing_params->priority) {
                 insert_pos = i;
                 break;
             } 
@@ -601,12 +661,6 @@ struct MediumStack {
     OSL_HOSTDEVICE void pop_medium()
     {
         if (depth > 0) {
-            mediums[0]->~Medium();
-            
-            for (int i = 1; i < depth; ++i) {
-                mediums[i - 1] = mediums[i];
-            }
-            
             depth--;
         }
     }
@@ -615,6 +669,7 @@ struct MediumStack {
         const MediumParams* current = current_params();
         return (current && ((params.priority < current->priority) || (params.is_special_priority() && current->is_special_priority() && depth > 1)));
     }
+
 private:
     /// Never try to copy this struct because it would invalidate the medium pointers
     OSL_HOSTDEVICE MediumStack(const MediumStack& c);
@@ -624,6 +679,7 @@ private:
     enum { MaxSize = 256 * sizeof(float) };
 
     Medium* mediums[MaxEntries];
+    float cdf[MaxEntries];
     char pool[MaxSize];
     int depth, num_bytes;
 };

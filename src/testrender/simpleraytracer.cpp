@@ -994,36 +994,8 @@ SimpleRaytracer::subpixel_radiance(float x, float y, Sampler& sampler,
             break;
         }
 
-        const Medium* medium = medium_stack.current(); 
-        bool in_medium = medium_stack.in_medium();
-
-        if (in_medium && medium) {
-            Medium::Sample medium_sample = medium->sample_vrtl(r, sampler, hit);
-            
-            path_weight *= medium_sample.transmittance;
-            
-            if (!(path_weight.x > 0 || path_weight.y > 0 || path_weight.z > 0)) {
-                break;
-            }
-            
-            if (medium_sample.scatter) {
-                r.origin = r.point(medium_sample.t);
-
-                Vec3 rand_phase = sampler.get();
-                BSDF::Sample phase_sample = medium->phase_func->sample_vrtl(-r.direction, 
-                                                            rand_phase.x, 
-                                                            rand_phase.y, 
-                                                            rand_phase.z);
-                if (phase_sample.pdf <= 0.0f) {
-                    break;
-                }
-
-                path_weight *= phase_sample.weight;
-                r.direction = phase_sample.wi;
-                bsdf_pdf = phase_sample.pdf;
-                continue;
-            }
-            
+        if (medium_stack.integrate(r, sampler, hit, path_weight, path_radiance, bsdf_pdf)) {
+            continue;
         }
 
         // construct a shader globals for the hit point
@@ -1191,7 +1163,7 @@ SimpleRaytracer::subpixel_radiance(float x, float y, Sampler& sampler,
         r.spread    = std::max(r.spread, p.roughness);
         r.roughness = p.roughness;
 
-        if (sg.backfacing) {
+        if (sg.backfacing) { // if exiting
             medium_stack.pop_medium();
         }
 
