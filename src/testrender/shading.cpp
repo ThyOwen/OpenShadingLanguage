@@ -1553,22 +1553,21 @@ struct HenyeyGreenstein final : public BSDF {
         Vec3 wi = frame.toworld(local_wi);
         float pdf_val = PhaseHG(cos_theta, g);
 
-        Color3 weight = Color3(1.0f);
-        return { wi, weight, pdf_val, 0.0f };
+        return { wi, Color3(1.0f), pdf_val, 0.0f };
     }
 
 };
 
-struct HomogeneousVolume final : public Medium {
+struct HomogeneousMedium final : public Medium {
     MediumParams params;
 
-    OSL_HOSTDEVICE HomogeneousVolume(const MediumParams& params)
+    OSL_HOSTDEVICE HomogeneousMedium(const MediumParams& params)
         : Medium(this), params(params)
     {
     }
 
-    OSL_HOSTDEVICE static HomogeneousVolume* create(void* storage, const MediumParams& params) {
-        HomogeneousVolume* volume = new (storage) HomogeneousVolume(params);
+    OSL_HOSTDEVICE static HomogeneousMedium* create(void* storage, const MediumParams& params) {
+        HomogeneousMedium* volume = new (storage) HomogeneousMedium(params);
         volume->phase_func = new HenyeyGreenstein(params.medium_g);
         return volume;
     }
@@ -1578,12 +1577,11 @@ struct HomogeneousVolume final : public Medium {
         Vec3 rand_vol = sampler.get();
 
         float t_volume = -logf(1.0f - rand_vol.x) / params.avg_sigma_t();
-        bool volume_scatter = (t_volume < hit.t);
 
         Color3 weight;
         Color3 tr;
         
-        if (volume_scatter) {
+        if (t_volume < hit.t) {
             r.origin = r.point(t_volume);
             tr = transmittance(t_volume);
 
@@ -1599,7 +1597,7 @@ struct HomogeneousVolume final : public Medium {
             );
         }
         
-        return Medium::Sample { volume_scatter, t_volume, tr, weight };
+        return Medium::Sample { t_volume, tr, weight };
     }
 
     OSL_HOSTDEVICE const MediumParams* get_params() const {
@@ -1614,22 +1612,22 @@ struct HomogeneousVolume final : public Medium {
     }
 };
 
-struct EmptyVolume final : public Medium {
+struct EmptyMedium final : public Medium {
     MediumParams params;
 
-    OSL_HOSTDEVICE EmptyVolume(const MediumParams& params)
+    OSL_HOSTDEVICE EmptyMedium(const MediumParams& params)
         : Medium(this), params(params)
     {
     }
 
-    OSL_HOSTDEVICE static EmptyVolume* create(void* storage, const MediumParams& params) {
-        EmptyVolume* volume = new (storage) EmptyVolume(params);
+    OSL_HOSTDEVICE static EmptyMedium* create(void* storage, const MediumParams& params) {
+        EmptyMedium* volume = new (storage) EmptyMedium(params);
         return volume;
     }
 
     OSL_HOSTDEVICE Medium::Sample sample(Ray& ray, Sampler &sampler, Intersection& hit) const
     {
-        return { false, 0.0f, Color3(1.0f), Color3(1.0f) };
+        return { 0.0f, Color3(1.0f), Color3(1.0f) };
     }
 
     OSL_HOSTDEVICE const MediumParams* get_params() const {
@@ -1781,9 +1779,9 @@ process_medium_closure(const ShaderGlobalsType& sg, float path_roughness,
 
             if (!sg.backfacing) { // if entering 
                 if (result.medium_data.is_vaccum()) {
-                    medium_stack.add_medium<EmptyVolume>(result.medium_data);
+                    medium_stack.add_medium<EmptyMedium>(result.medium_data);
                 } else {
-                    medium_stack.add_medium<HomogeneousVolume>(result.medium_data);
+                    medium_stack.add_medium<HomogeneousMedium>(result.medium_data);
                 }
             }
 
@@ -1810,9 +1808,9 @@ process_medium_closure(const ShaderGlobalsType& sg, float path_roughness,
                         
             if (!sg.backfacing) { // if entering 
                 if (result.medium_data.is_vaccum()) {
-                    medium_stack.add_medium<EmptyVolume>(result.medium_data);
+                    medium_stack.add_medium<EmptyMedium>(result.medium_data);
                 } else {
-                    medium_stack.add_medium<HomogeneousVolume>(result.medium_data);
+                    medium_stack.add_medium<HomogeneousMedium>(result.medium_data);
                 }
             }
 

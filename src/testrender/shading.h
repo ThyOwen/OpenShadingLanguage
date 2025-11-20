@@ -298,8 +298,8 @@ struct CharlieSheen;
 struct SpiThinLayer;
 struct HenyeyGreenstein;
 
-struct HomogeneousVolume;
-struct EmptyVolume;
+struct HomogeneousMedium;
+struct EmptyMedium;
 
 // StaticVirtual generates a switch/case dispatch method for us given
 // a list of possible subtypes. We just need to forward declare them.
@@ -312,7 +312,7 @@ using AbstractBSDF = bsdl::StaticVirtual<
     MxGeneralizedSchlickOpaque, MxGeneralizedSchlick, SpiThinLayer,
     HenyeyGreenstein>;
 
-using AbstractMedium = bsdl::StaticVirtual<HomogeneousVolume, EmptyVolume>;
+using AbstractMedium = bsdl::StaticVirtual<HomogeneousMedium, EmptyMedium>;
 
 // Then we just need to inherit from AbstractBSDF or AbstractMedium 
 
@@ -382,18 +382,17 @@ struct has_equal<T, std::void_t<decltype(std::declval<const T&>() == std::declva
 struct Medium : public AbstractMedium {
     struct Sample {
         OSL_HOSTDEVICE Sample() : 
-            scatter(false), t(0.0f), transmittance(0.0f), weight(0.0f)
+            t(0.0f), transmittance(0.0f), weight(0.0f)
         {
         }
         OSL_HOSTDEVICE Sample(const Sample& o) : 
-            scatter(o.scatter), t(o.t), transmittance(o.transmittance), weight(o.weight)
+            t(o.t), transmittance(o.transmittance), weight(o.weight)
         {
         }
-        OSL_HOSTDEVICE Sample(bool scatter, float t, Color3 transmittance, Color3 weight) : 
-            scatter(scatter), t(t), transmittance(transmittance), weight(weight)
+        OSL_HOSTDEVICE Sample(float t, Color3 transmittance, Color3 weight) : 
+            t(t), transmittance(transmittance), weight(weight)
         {
         }
-        bool scatter; 
         float t;
         Color3 transmittance;
         Color3 weight;
@@ -571,13 +570,14 @@ struct MediumStack {
 
     OSL_HOSTDEVICE int size() const { return depth; }
 
-    OSL_HOSTDEVICE bool integrate(Ray& r, Sampler& sampler, Intersection& hit, Color3& path_weight, Color3& path_radiance, float& bsdf_pdf) const 
+   OSL_HOSTDEVICE bool integrate(Ray& r, Sampler& sampler, Intersection& hit, Color3& path_weight, Color3& path_radiance, float& bsdf_pdf) const 
     {
         if (depth <= 0) {
             return false;
         }
         
-        Medium::Sample combined_sample{ false, 1.0f, Color3(1.0f), Color3(1.0f) };
+        Medium::Sample combined_sample{ 1.0f, Color3(1.0f), Color3(1.0f) };
+        bool scatter = false;
         
         for (int i = 0; i < depth; ++i) {
             Medium::Sample s = mediums[i]->sample_vrtl(r, sampler, hit);
@@ -585,7 +585,7 @@ struct MediumStack {
             combined_sample.transmittance *= s.transmittance;
             combined_sample.weight *= s.weight;
             
-            combined_sample.scatter = s.scatter || combined_sample.scatter;
+            scatter = s.t < hit.t || scatter;
             combined_sample.t = s.t < combined_sample.t ? s.t : combined_sample.t;
         }
 
@@ -596,8 +596,8 @@ struct MediumStack {
         path_weight *= combined_sample.transmittance;
 
         Vec3 rand_phase = sampler.get();
-        if (combined_sample.scatter) {
-            if (!mediums[0]->phase_func) {
+        if (scatter) {
+            if (!mediums[0]->phase_func) { // EmptyMedium won't have one
                 return false;
             }
             BSDF::Sample phase_sample = mediums[0]->phase_func->sample_vrtl(-r.direction, 

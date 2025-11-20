@@ -23,7 +23,7 @@
 
    <ShaderGroup>
       param color albedo 0.75 0.75 0.75;
-      param float extinction 0.005;
+      param float extinction 0.001;
       param float anisotropy 0.9;
 
       shader anisotropic layer1;
