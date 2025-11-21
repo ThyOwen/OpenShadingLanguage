@@ -1516,24 +1516,22 @@ private:
 
 struct HenyeyGreenstein final : public BSDF {
     const float g;
-    OSL_HOSTDEVICE HenyeyGreenstein(float g) 
-        : BSDF(this),
-        g(g) 
-    {
-    }
+    OSL_HOSTDEVICE HenyeyGreenstein(float g) : BSDF(this), g(g) {}
 
-    static OSL_HOSTDEVICE float PhaseHG(float cos_theta, float g) {
+    static OSL_HOSTDEVICE float PhaseHG(float cos_theta, float g)
+    {
         const float denom = 1 + g * g + 2 * g * cos_theta;
         return (1 - g * g) / (4 * M_PI * denom * sqrtf(denom));
     }
 
-    OSL_HOSTDEVICE Sample eval(const Vec3& wo, const Vec3& wi) const 
+    OSL_HOSTDEVICE Sample eval(const Vec3& wo, const Vec3& wi) const
     {
         const float pdf = PhaseHG(dot(wo, wi), g);
         return { wi, Color3(pdf), pdf, 0.0f };
     }
 
-    OSL_HOSTDEVICE Sample sample(const Vec3& wo, float rx, float ry, float rz) const 
+    OSL_HOSTDEVICE Sample sample(const Vec3& wo, float rx, float ry,
+                                 float rz) const
     {
         TangentFrame frame = TangentFrame::from_normal(wo);
 
@@ -1542,20 +1540,21 @@ struct HenyeyGreenstein final : public BSDF {
             cos_theta = 1.0f - 2.0f * rx;
         } else {
             float sqr_term = (1 - g * g) / (1 - g + 2 * g * rx);
-            cos_theta = (1 + g * g - sqr_term * sqr_term) / (2 * g);
-            cos_theta = OIIO::clamp(cos_theta, -1.0f, 1.0f);
+            cos_theta      = (1 + g * g - sqr_term * sqr_term) / (2 * g);
+            cos_theta      = OIIO::clamp(cos_theta, -1.0f, 1.0f);
         }
 
-        float sin_theta =  sqrtf(OIIO::clamp(1.0f - cos_theta * cos_theta, 0.0f, 1.0f));
-        float phi = 2 * M_PI * ry;
-        Vec3 local_wi = Vec3(sin_theta * cosf(phi), sin_theta * sinf(phi), cos_theta);
+        float sin_theta = sqrtf(
+            OIIO::clamp(1.0f - cos_theta * cos_theta, 0.0f, 1.0f));
+        float phi     = 2 * M_PI * ry;
+        Vec3 local_wi = Vec3(sin_theta * cosf(phi), sin_theta * sinf(phi),
+                             cos_theta);
 
-        Vec3 wi = frame.toworld(local_wi);
+        Vec3 wi       = frame.toworld(local_wi);
         float pdf_val = PhaseHG(cos_theta, g);
 
         return { wi, Color3(1.0f), pdf_val, 0.0f };
     }
-
 };
 
 struct HomogeneousMedium final : public Medium {
@@ -1566,13 +1565,16 @@ struct HomogeneousMedium final : public Medium {
     {
     }
 
-    OSL_HOSTDEVICE static HomogeneousMedium* create(void* storage, const MediumParams& params) {
+    OSL_HOSTDEVICE static HomogeneousMedium* create(void* storage,
+                                                    const MediumParams& params)
+    {
         HomogeneousMedium* volume = new (storage) HomogeneousMedium(params);
-        volume->phase_func = new HenyeyGreenstein(params.medium_g);
+        volume->phase_func        = new HenyeyGreenstein(params.medium_g);
         return volume;
     }
 
-    OSL_HOSTDEVICE Medium::Sample sample(Ray& r, Sampler &sampler, Intersection& hit) const
+    OSL_HOSTDEVICE Medium::Sample sample(Ray& r, Sampler& sampler,
+                                         Intersection& hit) const
     {
         Vec3 rand_vol = sampler.get();
 
@@ -1580,32 +1582,26 @@ struct HomogeneousMedium final : public Medium {
 
         Color3 weight;
         Color3 tr;
-        
+
         if (t_volume < hit.t) {
             r.origin = r.point(t_volume);
-            tr = transmittance(t_volume);
+            tr       = transmittance(t_volume);
 
             Color3 albedo = params.sigma_s / params.sigma_t;
 
             weight = albedo / tr;
         } else {
-            tr = transmittance(hit.t);
-            weight = Color3(
-                1.0 / tr.x,
-                1.0 / tr.y,
-                1.0 / tr.z
-            );
+            tr     = transmittance(hit.t);
+            weight = Color3(1.0 / tr.x, 1.0 / tr.y, 1.0 / tr.z);
         }
-        
+
         return Medium::Sample { t_volume, tr, weight };
     }
 
-    OSL_HOSTDEVICE const MediumParams* get_params() const {
-        return &params;
-    }
+    OSL_HOSTDEVICE const MediumParams* get_params() const { return &params; }
 
     OSL_HOSTDEVICE Color3 transmittance(float distance) const
-    { // Beer-Lambert law
+    {  // Beer-Lambert law
         return Color3(expf(-params.sigma_t.x * distance),
                       expf(-params.sigma_t.y * distance),
                       expf(-params.sigma_t.z * distance));
@@ -1620,19 +1616,20 @@ struct EmptyMedium final : public Medium {
     {
     }
 
-    OSL_HOSTDEVICE static EmptyMedium* create(void* storage, const MediumParams& params) {
+    OSL_HOSTDEVICE static EmptyMedium* create(void* storage,
+                                              const MediumParams& params)
+    {
         EmptyMedium* volume = new (storage) EmptyMedium(params);
         return volume;
     }
 
-    OSL_HOSTDEVICE Medium::Sample sample(Ray& ray, Sampler &sampler, Intersection& hit) const
+    OSL_HOSTDEVICE Medium::Sample sample(Ray& ray, Sampler& sampler,
+                                         Intersection& hit) const
     {
         return { 0.0f, Color3(1.0f), Color3(1.0f) };
     }
 
-    OSL_HOSTDEVICE const MediumParams* get_params() const {
-        return &params;
-    }
+    OSL_HOSTDEVICE const MediumParams* get_params() const { return &params; }
 };
 
 
@@ -1729,7 +1726,7 @@ evaluate_layer_opacity(const ShaderGlobalsType& sg, float path_roughness,
 
 OSL_HOSTDEVICE void
 process_medium_closure(const ShaderGlobalsType& sg, float path_roughness,
-                       ShadingResult& result, MediumStack &medium_stack,
+                       ShadingResult& result, MediumStack& medium_stack,
                        const ClosureColor* closure, const Color3& w)
 {
     if (!closure)
@@ -1772,20 +1769,22 @@ process_medium_closure(const ShaderGlobalsType& sg, float path_roughness,
             const ClosureComponent* comp = closure->as_comp();
             Color3 cw                    = weight * comp->w;
             const auto& params           = *comp->as<MxAnisotropicVdfParams>();
-            result.medium_data.sigma_t               = cw * params.extinction;
-            result.medium_data.sigma_s               = params.albedo * result.medium_data.sigma_t;
-            result.medium_data.medium_g              = params.anisotropy;
-            result.medium_data.priority              = 0;
+            result.medium_data.sigma_t   = cw * params.extinction;
+            result.medium_data.sigma_s   = params.albedo
+                                         * result.medium_data.sigma_t;
+            result.medium_data.medium_g = params.anisotropy;
+            result.medium_data.priority = 0;
 
-            if (!sg.backfacing) { // if entering 
+            if (!sg.backfacing) {  // if entering
                 if (result.medium_data.is_vaccum()) {
                     medium_stack.add_medium<EmptyMedium>(result.medium_data);
                 } else {
-                    medium_stack.add_medium<HomogeneousMedium>(result.medium_data);
+                    medium_stack.add_medium<HomogeneousMedium>(
+                        result.medium_data);
                 }
             }
 
-            closure                      = nullptr;
+            closure = nullptr;
             break;
         }
         case MX_MEDIUM_VDF_ID: {
@@ -1793,24 +1792,27 @@ process_medium_closure(const ShaderGlobalsType& sg, float path_roughness,
             Color3 cw                    = weight * comp->w;
             const auto& params           = *comp->as<MxMediumVdfParams>();
 
-            result.medium_data.sigma_t = Color3(
-                -OIIO::fast_log(params.transmission_color.x),
-                -OIIO::fast_log(params.transmission_color.y),
-                -OIIO::fast_log(params.transmission_color.z)
-            );
-            
+            result.medium_data.sigma_t
+                = Color3(-OIIO::fast_log(params.transmission_color.x),
+                         -OIIO::fast_log(params.transmission_color.y),
+                         -OIIO::fast_log(params.transmission_color.z));
+
             result.medium_data.sigma_t *= cw / params.transmission_depth;
-            result.medium_data.sigma_s  = params.albedo * result.medium_data.sigma_t;
+            result.medium_data.sigma_s = params.albedo
+                                         * result.medium_data.sigma_t;
             result.medium_data.medium_g = params.anisotropy;
-            
-            result.medium_data.refraction_ior = sg.backfacing ? 1.0f / params.ior : params.ior;
-            result.medium_data.priority = params.priority;
-                        
-            if (!sg.backfacing) { // if entering 
+
+            result.medium_data.refraction_ior = sg.backfacing
+                                                    ? 1.0f / params.ior
+                                                    : params.ior;
+            result.medium_data.priority       = params.priority;
+
+            if (!sg.backfacing) {  // if entering
                 if (result.medium_data.is_vaccum()) {
                     medium_stack.add_medium<EmptyMedium>(result.medium_data);
                 } else {
-                    medium_stack.add_medium<HomogeneousMedium>(result.medium_data);
+                    medium_stack.add_medium<HomogeneousMedium>(
+                        result.medium_data);
                 }
             }
 
@@ -1822,12 +1824,16 @@ process_medium_closure(const ShaderGlobalsType& sg, float path_roughness,
             const MxDielectric::Data& params = *comp->as<MxDielectric::Data>();
             if (!is_black(weight * comp->w * params.refr_tint)) {
                 float new_ior = sg.backfacing ? 1.0f / params.IOR : params.IOR;
-                
-                result.medium_data.refraction_ior = new_ior; 
 
-                const MediumParams* current_params = medium_stack.current_params();
-                if (current_params && result.medium_data.priority <= current_params->priority) {
-                    result.medium_data.refraction_ior = current_params->refraction_ior;
+                result.medium_data.refraction_ior = new_ior;
+
+                const MediumParams* current_params
+                    = medium_stack.current_params();
+                if (current_params
+                    && result.medium_data.priority
+                           <= current_params->priority) {
+                    result.medium_data.refraction_ior
+                        = current_params->refraction_ior;
                 }
             }
             closure = nullptr;
@@ -1837,17 +1843,22 @@ process_medium_closure(const ShaderGlobalsType& sg, float path_roughness,
             const ClosureComponent* comp = closure->as_comp();
             const auto& params = *comp->as<MxGeneralizedSchlickParams>();
             if (!is_black(weight * comp->w * params.transmission_tint)) {
-                float avg_F0  = clamp((params.f0.x + params.f0.y + params.f0.z) / 3.0f,
-                                    0.0f, 0.99f);
+                float avg_F0  = clamp((params.f0.x + params.f0.y + params.f0.z)
+                                          / 3.0f,
+                                      0.0f, 0.99f);
                 float sqrt_F0 = sqrtf(avg_F0);
                 float ior     = (1 + sqrt_F0) / (1 - sqrt_F0);
                 float new_ior = sg.backfacing ? 1.0f / ior : ior;
-                
-                result.medium_data.refraction_ior = new_ior; 
 
-                const MediumParams* current_params = medium_stack.current_params();
-                if (current_params && result.medium_data.priority <= current_params->priority) {
-                    result.medium_data.refraction_ior = current_params->refraction_ior;
+                result.medium_data.refraction_ior = new_ior;
+
+                const MediumParams* current_params
+                    = medium_stack.current_params();
+                if (current_params
+                    && result.medium_data.priority
+                           <= current_params->priority) {
+                    result.medium_data.refraction_ior
+                        = current_params->refraction_ior;
                 }
             }
             closure = nullptr;
@@ -1865,8 +1876,8 @@ process_medium_closure(const ShaderGlobalsType& sg, float path_roughness,
 // recursively walk through the closure tree, creating bsdfs as we go
 OSL_HOSTDEVICE void
 process_bsdf_closure(const ShaderGlobalsType& sg, float path_roughness,
-                     ShadingResult& result, MediumStack& medium_stack, 
-                     const ClosureColor* closure, const Color3& w, 
+                     ShadingResult& result, MediumStack& medium_stack,
+                     const ClosureColor* closure, const Color3& w,
                      bool light_only)
 {
     static const ustringhash uh_ggx("ggx");
@@ -2000,12 +2011,15 @@ process_bsdf_closure(const ShaderGlobalsType& sg, float path_roughness,
                 case MxDielectric::closureid(): {
                     const MxDielectric::Data& params
                         = *comp->as<MxDielectric::Data>();
-                    
-                    if (medium_stack.false_intersection_with(result.medium_data)) {
+
+                    if (medium_stack.false_intersection_with(
+                            result.medium_data)) {
                         ok = result.bsdf.add_bsdf<Transparent>(cw);
                     } else {
-                        ok = result.bsdf.add_bsdf<MxDielectric>(cw, params, -sg.I,
-                                            sg.backfacing, path_roughness);
+                        ok = result.bsdf.add_bsdf<MxDielectric>(cw, params,
+                                                                -sg.I,
+                                                                sg.backfacing,
+                                                                path_roughness);
                     }
                     break;
                 }
@@ -2020,14 +2034,14 @@ process_bsdf_closure(const ShaderGlobalsType& sg, float path_roughness,
                     const MxGeneralizedSchlickParams& params
                         = *comp->as<MxGeneralizedSchlickParams>();
 
-                    if (medium_stack.false_intersection_with(result.medium_data)) {
+                    if (medium_stack.false_intersection_with(
+                            result.medium_data)) {
                         ok = result.bsdf.add_bsdf<Transparent>(cw);
                     } else {
                         if (is_black(params.transmission_tint)) {
                             ok = result.bsdf.add_bsdf<MxMicrofacet<
-                                MxGeneralizedSchlickParams, GGXDist, false>>(cw,
-                                                                            params,
-                                                                            1.0f);
+                                MxGeneralizedSchlickParams, GGXDist, false>>(
+                                cw, params, 1.0f);
                         } else {
                             ok = result.bsdf.add_bsdf<MxMicrofacet<
                                 MxGeneralizedSchlickParams, GGXDist, true>>(
@@ -2122,12 +2136,14 @@ process_bsdf_closure(const ShaderGlobalsType& sg, float path_roughness,
 
 OSL_HOSTDEVICE void
 process_closure(const ShaderGlobalsType& sg, float path_roughness,
-                ShadingResult& result, MediumStack &medium_stack,
+                ShadingResult& result, MediumStack& medium_stack,
                 const ClosureColor* Ci, bool light_only)
 {
     if (!light_only)
-        process_medium_closure(sg, path_roughness, result, medium_stack, Ci, Color3(1));
-    process_bsdf_closure(sg, path_roughness, result, medium_stack, Ci, Color3(1), light_only);
+        process_medium_closure(sg, path_roughness, result, medium_stack, Ci,
+                               Color3(1));
+    process_bsdf_closure(sg, path_roughness, result, medium_stack, Ci,
+                         Color3(1), light_only);
 }
 
 OSL_HOSTDEVICE Vec3
@@ -2188,12 +2204,15 @@ BSDF::sample_vrtl(const Vec3& wo, float rx, float ry, float rz) const
     return dispatch([&](auto bsdf) { return bsdf.sample(wo, rx, ry, rz); });
 }
 
-Medium::Sample Medium::sample_vrtl(Ray& ray, Sampler &sampler, Intersection& hit) const
+Medium::Sample
+Medium::sample_vrtl(Ray& ray, Sampler& sampler, Intersection& hit) const
 {
-    return dispatch([&](const auto& medium) { return medium.sample(ray, sampler, hit); });
+    return dispatch(
+        [&](const auto& medium) { return medium.sample(ray, sampler, hit); });
 }
 
-const MediumParams* Medium::get_params_vrtl() const
+const MediumParams*
+Medium::get_params_vrtl() const
 {
     return dispatch([&](const auto& medium) { return medium.get_params(); });
 }

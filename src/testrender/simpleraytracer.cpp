@@ -995,7 +995,8 @@ SimpleRaytracer::subpixel_radiance(float x, float y, Sampler& sampler,
             break;
         }
 
-        if (medium_stack.integrate(r, sampler, hit, path_weight, path_radiance, bsdf_pdf)) {
+        if (medium_stack.integrate(r, sampler, hit, path_weight, path_radiance,
+                                   bsdf_pdf)) {
             continue;
         }
 
@@ -1038,9 +1039,9 @@ SimpleRaytracer::subpixel_radiance(float x, float y, Sampler& sampler,
 #endif
         ShadingResult result;
         bool last_bounce = b == max_bounces;
-        process_closure(sg, r.roughness, result, medium_stack, 
+        process_closure(sg, r.roughness, result, medium_stack,
                         (const ClosureColor*)sg.Ci, last_bounce);
-        
+
 #ifndef __CUDACC__
         const size_t lightprims_size = m_lightprims.size();
 #endif
@@ -1084,17 +1085,17 @@ SimpleRaytracer::subpixel_radiance(float x, float y, Sampler& sampler,
             float bg_pdf   = 0;
             Vec3 bg        = background.sample(xi, yi, bg_dir, bg_pdf);
             BSDF::Sample b = result.bsdf.eval(-sg.I, bg_dir.val());
-            Color3 contrib = path_weight * b.weight * 
-                             bg * MIS::power_heuristic<MIS::WEIGHT_WEIGHT>(bg_pdf,
+            Color3 contrib = path_weight * b.weight * bg
+                             * MIS::power_heuristic<MIS::WEIGHT_WEIGHT>(bg_pdf,
                                                                         b.pdf);
             if ((contrib.x + contrib.y + contrib.z) > 0) {
                 ShaderGlobalsType shadow_sg;
                 Ray shadow_ray          = Ray(sg.P, bg_dir.val(), radius, 0, 0,
                                               Ray::SHADOW);
                 Intersection shadow_hit = scene.intersect(shadow_ray, inf,
-                                                          hit.id);                
-                    
-                if (shadow_hit.t == inf) // ray reached the background?
+                                                          hit.id);
+
+                if (shadow_hit.t == inf)  // ray reached the background?
                     path_radiance += contrib;
             }
         }
@@ -1131,10 +1132,9 @@ SimpleRaytracer::subpixel_radiance(float x, float y, Sampler& sampler,
 #else
                     const bool did_hit = fabsf(shadow_hit.t - sample.dist)
                                          < 1e-3f;
-#endif  
-                    
+#endif
+
                     if (did_hit) {
-                        
                         globals_from_hit(light_sg, shadow_ray, sample.dist, lid,
                                          sample.u, sample.v);
 #ifndef __CUDACC__
@@ -1144,9 +1144,10 @@ SimpleRaytracer::subpixel_radiance(float x, float y, Sampler& sampler,
                         execute_shader(light_sg, shaderID, light_closure_pool);
 #endif
                         ShadingResult light_result;
-                        process_closure(light_sg, r.roughness, light_result, medium_stack,
+                        process_closure(light_sg, r.roughness, light_result,
+                                        medium_stack,
                                         (const ClosureColor*)light_sg.Ci, true);
-                        
+
                         path_radiance += contrib * light_result.Le;
                     }
                 }
@@ -1164,15 +1165,16 @@ SimpleRaytracer::subpixel_radiance(float x, float y, Sampler& sampler,
         r.spread    = std::max(r.spread, p.roughness);
         r.roughness = p.roughness;
 
-        if (sg.backfacing) { // if exiting
+        if (sg.backfacing) {  // if exiting
             medium_stack.pop_medium();
         }
 
-        if (!(path_weight.x > 0) && !(path_weight.y > 0) && !(path_weight.z > 0) && b > 10)
+        if (!(path_weight.x > 0) && !(path_weight.y > 0) && !(path_weight.z > 0)
+            && b > 10)
             break;  // filter out all 0's or NaNs
         prev_id  = hit.id;
         r.origin = sg.P;
-    }    
+    }
     return path_radiance;
 }
 
