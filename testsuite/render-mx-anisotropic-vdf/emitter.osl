@@ -5,19 +5,27 @@
 
 surface
 emitter
-    [[ string description = "Lambertian emitter material" ]]
+    [[ string description = "Spot emitter material" ]]
 (
     float power = 1
-        [[  string description = "Total power of the light",
-            float UImin = 0 ]],
+        [[ string description = "Total power of the light",
+           float UImin = 0 ]],
     color Cs = 1
-        [[  string description = "Base color",
-            float UImin = 0, float UImax = 1 ]]
-  )
+        [[ string description = "Base color",
+           float UImin = 0, float UImax = 1 ]],
+    float spread = 90
+        [[ string description = "Spread angle in degrees",
+           float UImin = 1, float UImax = 180 ]]
+)
 {
-    // Because emission() expects a weight in radiance, we must convert by dividing
-    // the power (in Watts) by the surface area and the factor of PI implied by
-    // uniform emission over the hemisphere. N.B.: The total power is BEFORE Cs
-    // filters the color!
-    Ci = (power / (M_PI * surfacearea())) * Cs * emission();
+    vector wo = normalize(I);
+    
+    float cosAngle = dot(N, -wo);
+    
+    float halfSpread = radians(spread * 0.5);
+    float cosThreshold = cos(halfSpread);
+    
+    float falloff = (cosAngle > cosThreshold) ? 1 : 0;
+    
+    Ci = (power / (M_PI * surfacearea())) * Cs * falloff * emission();
 }
