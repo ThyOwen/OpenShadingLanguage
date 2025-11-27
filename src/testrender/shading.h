@@ -393,20 +393,13 @@ struct Medium : public AbstractMedium {
 
     template<typename LOBE>
     OSL_HOSTDEVICE Medium(LOBE* lobe)
-        : AbstractMedium(lobe), phase_func(nullptr)
+        : AbstractMedium(lobe)
     {
     }
-
-    template<typename Medium_Type, typename... Medium_Args>
-    OSL_HOSTDEVICE static Medium_Type* create(void*, Medium_Args&&...)
-    {
-        static_assert(
-            sizeof...(Medium_Args) == 0,
-            "Subclass must implement its own static create() function");  // this is hacky
-        return nullptr;
-    }
-
+    
     OSL_HOSTDEVICE const MediumParams* get_params() const { return {}; }
+
+    OSL_HOSTDEVICE const MediumParams* get_params_vrtl() const;
 
     OSL_HOSTDEVICE Sample sample(Ray& r, Sampler& sampler,
                                  Intersection& hit) const
@@ -417,9 +410,15 @@ struct Medium : public AbstractMedium {
     OSL_HOSTDEVICE Sample sample_vrtl(Ray& r, Sampler& sampler,
                                       Intersection& hit) const;
 
-    OSL_HOSTDEVICE const MediumParams* get_params_vrtl() const;
+    OSL_HOSTDEVICE BSDF::Sample sample_phase_func(const Vec3& wo, float rx,
+                                                  float ry,
+                                                  float rz) const {
+                                                    return {};
+                                                  }
+    OSL_HOSTDEVICE BSDF::Sample sample_phase_func_vrtl(const Vec3& wo, float rx,
+                                                       float ry,
+                                                       float rz) const;
 
-    BSDF* phase_func;
 };
 
 /// Represents a weighted sum of BSDFS
@@ -472,7 +471,7 @@ struct CompositeBSDF {
 
     OSL_HOSTDEVICE BSDF::Sample eval(const Vec3& wo, const Vec3& wi) const
     {
-        BSDF::Sample s = {};
+        BSDF::Sample s;  // Use default constructor instead of {} initialization
         for (int i = 0; i < num_bsdfs; i++) {
             BSDF::Sample b = bsdfs[i]->eval_vrtl(wo, wi);
             b.weight *= weights[i];
@@ -601,10 +600,8 @@ struct MediumStack {
 
         Vec3 rand_phase = sampler.get();
         if (scatter) {
-            if (!mediums[0]->phase_func) {  // EmptyMedium won't have one
-                return false;
-            }
-            BSDF::Sample phase_sample = mediums[0]->phase_func->sample_vrtl(
+
+            BSDF::Sample phase_sample = mediums[0]->sample_phase_func_vrtl(
                 -r.direction, rand_phase.x, rand_phase.y, rand_phase.z);
             if (phase_sample.pdf <= 0.0f) {
                 return false;
@@ -628,9 +625,8 @@ struct MediumStack {
         if (num_bytes + sizeof(Medium_Type) > MaxSize)
             return false;
 
-        Medium_Type* new_medium
-            = Medium_Type::create(pool + num_bytes,
-                                  std::forward<Medium_Args>(args)...);
+        Medium_Type* new_medium = new (pool + num_bytes)
+            Medium_Type(std::forward<Medium_Args>(args)...);
 
         if (!new_medium) {
             return false;

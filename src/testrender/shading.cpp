@@ -1559,18 +1559,11 @@ struct HenyeyGreenstein final : public BSDF {
 
 struct HomogeneousMedium final : public Medium {
     MediumParams params;
+    HenyeyGreenstein phase_func;
 
     OSL_HOSTDEVICE HomogeneousMedium(const MediumParams& params)
-        : Medium(this), params(params)
+        : Medium(this), params(params), phase_func(params.medium_g)
     {
-    }
-
-    OSL_HOSTDEVICE static HomogeneousMedium* create(void* storage,
-                                                    const MediumParams& params)
-    {
-        HomogeneousMedium* volume = new (storage) HomogeneousMedium(params);
-        volume->phase_func        = new HenyeyGreenstein(params.medium_g);
-        return volume;
     }
 
     OSL_HOSTDEVICE Medium::Sample sample(Ray& r, Sampler& sampler,
@@ -1598,6 +1591,13 @@ struct HomogeneousMedium final : public Medium {
         return Medium::Sample { t_volume, tr, weight };
     }
 
+    OSL_HOSTDEVICE BSDF::Sample sample_phase_func(const Vec3& wo, float rx,
+                                                     float ry,
+                                                     float rz) const
+    {
+        return phase_func.sample(wo, rx, ry, rz);
+    }
+
     OSL_HOSTDEVICE const MediumParams* get_params() const { return &params; }
 
     OSL_HOSTDEVICE Color3 transmittance(float distance) const
@@ -1616,12 +1616,7 @@ struct EmptyMedium final : public Medium {
     {
     }
 
-    OSL_HOSTDEVICE static EmptyMedium* create(void* storage,
-                                              const MediumParams& params)
-    {
-        EmptyMedium* volume = new (storage) EmptyMedium(params);
-        return volume;
-    }
+    OSL_HOSTDEVICE const MediumParams* get_params() const { return &params; }
 
     OSL_HOSTDEVICE Medium::Sample sample(Ray& ray, Sampler& sampler,
                                          Intersection& hit) const
@@ -1629,7 +1624,13 @@ struct EmptyMedium final : public Medium {
         return { 0.0f, Color3(1.0f), Color3(1.0f) };
     }
 
-    OSL_HOSTDEVICE const MediumParams* get_params() const { return &params; }
+    OSL_HOSTDEVICE BSDF::Sample sample_phase_func(const Vec3& wo, float rx,
+                                                     float ry,
+                                                     float rz) const
+    {
+        return { Vec3(1.0f), Color3(1.0f), 0.0f, 0.0f };
+    }
+
 };
 
 
@@ -2204,14 +2205,20 @@ BSDF::sample_vrtl(const Vec3& wo, float rx, float ry, float rz) const
     return dispatch([&](auto bsdf) { return bsdf.sample(wo, rx, ry, rz); });
 }
 
-Medium::Sample
+OSL_HOSTDEVICE Medium::Sample
 Medium::sample_vrtl(Ray& ray, Sampler& sampler, Intersection& hit) const
 {
     return dispatch(
         [&](const auto& medium) { return medium.sample(ray, sampler, hit); });
 }
 
-const MediumParams*
+OSL_HOSTDEVICE BSDF::Sample
+Medium::sample_phase_func_vrtl(const Vec3& wo, float rx, float ry, float rz) const
+{
+    return dispatch([&](auto medium) { return medium.sample_phase_func(wo, rx, ry, rz); });
+}
+
+OSL_HOSTDEVICE const MediumParams*
 Medium::get_params_vrtl() const
 {
     return dispatch([&](const auto& medium) { return medium.get_params(); });

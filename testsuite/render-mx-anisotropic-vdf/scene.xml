@@ -17,7 +17,7 @@
    
 
    <ShaderGroup is_light="yes">float power 90000; shader emitter layer1</ShaderGroup>
-   <Quad corner="40, 99.99, 40" edge_x="20, 0, 0" edge_y="0, 0, 20" /> <!--Lite -->
+   <Quad corner="40, 99.95, 40" edge_x="20, 0, 0" edge_y="0, 0, 20" /> <!--Lite -->
 
    <ShaderGroup>
       param color albedo 0.85 0.85 0.85;
@@ -26,11 +26,11 @@
 
       shader anisotropic layer1;
    </ShaderGroup>
-   <Quad corner="0,0,0" edge_x="99.99,0,0" edge_y="0,99.99,0" /> <!-- Bottom -->
-   <Quad corner="0,0,0" edge_x="99.99,0,0" edge_y="0,0,149.9" /> <!-- Back -->
-   <Quad corner="0,0,0" edge_x="0,99.99,0" edge_y="0,0,149.9" /> <!-- Left -->
-   <Quad corner="99.99,0,0" edge_x="0,99.99,0" edge_y="0,0,149.9" /> <!-- Right -->
-   <Quad corner="0,99.99,0" edge_x="99.99,0,0" edge_y="0,0,149.9" /> <!-- Front -->
-   <Quad corner="0,0,149.9" edge_x="99.99,0,0" edge_y="0,99.99,0" /> <!-- Top -->   
+   <Quad corner="0,0,0" edge_x="99.9,0,0" edge_y="0,99.9,0" /> <!-- Bottom -->
+   <Quad corner="0,0,0" edge_x="99.9,0,0" edge_y="0,0,149.9" /> <!-- Back -->
+   <Quad corner="0,0,0" edge_x="0,99.9,0" edge_y="0,0,149.9" /> <!-- Left -->
+   <Quad corner="99.9,0,0" edge_x="0,99.9,0" edge_y="0,0,149.9" /> <!-- Right -->
+   <Quad corner="0,99.9,0" edge_x="99.9,0,0" edge_y="0,0,149.9" /> <!-- Front -->
+   <Quad corner="0,0,149.9" edge_x="99.9,0,0" edge_y="0,99.9,0" /> <!-- Top -->   
 
 </World>
