@@ -368,13 +368,6 @@ struct BSDF : public AbstractBSDF {
 #endif
 };
 
-template<typename, typename = void> struct has_equal : std::false_type {};
-
-template<typename T>
-struct has_equal<T, std::void_t<decltype(std::declval<const T&>()
-                                         == std::declval<const T&>())>>
-    : std::true_type {};
-
 struct Medium : public AbstractMedium {
     struct Sample {
         OSL_HOSTDEVICE Sample() : t(0.0f), transmittance(0.0f), weight(0.0f) {}
@@ -471,7 +464,7 @@ struct CompositeBSDF {
 
     OSL_HOSTDEVICE BSDF::Sample eval(const Vec3& wo, const Vec3& wi) const
     {
-        BSDF::Sample s;  // Use default constructor instead of {} initialization
+        BSDF::Sample s {};
         for (int i = 0; i < num_bsdfs; i++) {
             BSDF::Sample b = bsdfs[i]->eval_vrtl(wo, wi);
             b.weight *= weights[i];

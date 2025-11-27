@@ -2050,7 +2050,7 @@ process_bsdf_closure(const ShaderGlobalsType& sg, float path_roughness,
                         }
                     }
                     break;
-                }
+                };
                 case MX_TRANSLUCENT_ID: {
                     const MxTranslucentParams* srcparams
                         = comp->as<MxTranslucentParams>();
